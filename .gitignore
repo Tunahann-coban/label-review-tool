@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Node
+node_modules/
+web/dist/
+
+# Üretilen veri (make_sample_data.py ve araç yeniden üretir)
+sample_package/
+export/
+
+# Editör / sistem
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
