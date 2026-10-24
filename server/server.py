@@ -9,12 +9,14 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
+import exporter
 from package import Package, merge_objects
 from review_store import ReviewError, ReviewStore
 
 app = FastAPI(title="Label Review Tool")
 pkg: Package = None  # set in main()
 store: ReviewStore = None
+export_dir = "export"
 
 
 class Decision(BaseModel):
@@ -65,15 +67,26 @@ def save_review(image_id: int, decision: Decision):
     return image_detail(image_id)
 
 
+@app.post("/api/export")
+def export():
+    with store.lock:  # no decision is half-saved while we read
+        try:
+            return exporter.export(pkg, store, export_dir)
+        except exporter.ExportError as e:
+            raise HTTPException(409, str(e))
+
+
 def main():
-    global pkg, store
+    global pkg, store, export_dir
     parser = argparse.ArgumentParser(description="Label review service")
     parser.add_argument("--package", default="sample_package", help="package folder")
     parser.add_argument("--reviewer", default="unknown", help="reviewer name")
+    parser.add_argument("--export", default="export", help="folder the YOLO dataset is written to")
     parser.add_argument("--port", type=int, default=8000)
     args = parser.parse_args()
     pkg = Package(args.package)
     store = ReviewStore(pkg, args.reviewer)
+    export_dir = args.export
     print(f"package: {pkg.root} ({len(pkg.images)} images), reviewer: {args.reviewer}", flush=True)
     uvicorn.run(app, host="127.0.0.1", port=args.port)
 

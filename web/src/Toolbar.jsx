@@ -1,6 +1,7 @@
 // Top bar: navigation, image status, progress and save feedback.
 // Buttons come first so they never move when the file name length changes.
-export default function Toolbar({ images, index, onGo, onNextPending, nextPendingIndex, saving, saveError }) {
+export default function Toolbar({ images, index, onGo, onNextPending, nextPendingIndex, saving, saveError,
+  onExport, exporting }) {
   const total = images.length
   const reviewed = images.filter((img) => img.status === 'reviewed').length
   const current = images[index]
@@ -22,6 +23,10 @@ export default function Toolbar({ images, index, onGo, onNextPending, nextPendin
         </div>
         <span>{done ? 'hepsi incelendi ✓' : `${reviewed} / ${total} incelendi`}</span>
       </div>
+      {/* disabled until at least one image is reviewed: nothing to export before that */}
+      <button onClick={onExport} disabled={exporting || reviewed === 0}>
+        {exporting ? 'Aktarılıyor...' : 'Dışa aktar'}
+      </button>
 
       {saving && <span className="muted">kaydediliyor...</span>}
       {saveError && <span className="error">Kaydedilemedi: {saveError}</span>}

@@ -37,7 +37,7 @@ export default function SelectedPanel({ object, reasons, categories, categoryNam
       </div>
       <label className="class-select">
         Sınıf:
-        <select value={object?.category_id ?? ''} disabled={!object || saving}
+        <select value={object?.category_id ?? ''} disabled={!object || saving} aria-label="Sınıf"
           onChange={(e) => {
             onDecide('change', Number(e.target.value))
             e.target.blur()  // give the keyboard shortcuts back

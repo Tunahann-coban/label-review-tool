@@ -15,6 +15,13 @@ class Package:
         self.categories = data["categories"]
         self.category_ids = {c["id"] for c in self.categories}
         self.images = {img["id"]: img for img in data["images"]}
+        # reviews/<stem>.json and labels/<stem>.txt need unique stems (a.jpg + a.png would clash)
+        stems = {}
+        for img in self.images.values():
+            stem = Path(img["file_name"]).stem
+            if stem in stems:
+                raise ValueError(f"same file stem '{stem}': {stems[stem]} and {img['file_name']}")
+            stems[stem] = img["file_name"]
         self.annotations = {}  # image_id -> [annotation]
         for ann in data["annotations"]:
             self.annotations.setdefault(ann["image_id"], []).append(ann)

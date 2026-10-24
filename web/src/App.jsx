@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { fetchImage, fetchPackage, postReview } from './api'
+import { fetchImage, fetchPackage, postExport, postReview } from './api'
+import ExportResult from './ExportResult'
 import ImageViewer from './ImageViewer'
 import ObjectList from './ObjectList'
 import SelectedPanel from './SelectedPanel'
@@ -20,6 +21,8 @@ export default function App() {
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState(null)
   const [threshold, setThreshold] = useState(DEFAULT_THRESHOLD)
+  const [exporting, setExporting] = useState(false)
+  const [exportOutcome, setExportOutcome] = useState(null)  // { result } or { error }
 
   // Retry until the service is up, so the page can be opened first
   useEffect(() => {
@@ -94,6 +97,18 @@ export default function App() {
     }
   }, [current, selected, saving])
 
+  const runExport = async () => {
+    setExporting(true)
+    setExportOutcome(null)
+    try {
+      setExportOutcome({ result: await postExport() })
+    } catch (err) {
+      setExportOutcome({ error: err.message })
+    } finally {
+      setExporting(false)
+    }
+  }
+
   useEffect(() => {
     const onKey = (e) => {
       if (isFormField(e.target) || e.ctrlKey || e.altKey || e.metaKey) return
@@ -123,7 +138,11 @@ export default function App() {
     <main className="app">
       <Toolbar images={pkg.images} index={index} onGo={go}
         nextPendingIndex={nextPendingIndex} onNextPending={() => setIndex(nextPendingIndex)}
-        saving={saving} saveError={saveError} />
+        saving={saving} saveError={saveError} onExport={runExport} exporting={exporting} />
+      {exportOutcome && (
+        <ExportResult result={exportOutcome.result} error={exportOutcome.error}
+          onClose={() => setExportOutcome(null)} />
+      )}
       {current ? (
         <div className="workspace">
           <ImageViewer detail={current} categoryNames={categoryNames}

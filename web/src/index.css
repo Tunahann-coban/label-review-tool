@@ -352,3 +352,68 @@ kbd {
 .error {
   color: #b00020;
 }
+
+/* floats over the workspace, top right, so the layout below does not move */
+.export-result {
+  position: fixed;
+  top: 56px;
+  right: 24px;
+  z-index: 10;
+  width: 340px;
+  max-height: calc(100vh - 80px);
+  overflow-y: auto;
+  box-sizing: border-box;
+  background: #fff;
+  border: 1px solid #ccc;
+  border-radius: 8px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.15);
+  padding: 12px 14px;
+  font-size: 14px;
+}
+
+.export-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.export-head button {
+  border: none;
+  background: none;
+  font-size: 16px;
+  cursor: pointer;
+}
+
+.export-result p {
+  margin: 8px 0;
+}
+
+.export-result .path {
+  word-break: break-all;
+  font-size: 12px;
+}
+
+.export-result table {
+  width: 100%;
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+}
+
+.export-result th,
+.export-result td {
+  text-align: left;
+  padding: 3px 6px;
+  border-bottom: 1px solid #eee;
+}
+
+.export-result td:last-child,
+.export-result th:last-child {
+  text-align: right;
+}
+
+.warnings {
+  margin: 0;
+  padding-left: 18px;
+  color: #8a5300;
+  font-size: 13px;
+}
