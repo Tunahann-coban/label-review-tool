@@ -109,6 +109,8 @@ Gerçek paket (`bidvision_package.zip`) GitHub'da **yok**, çünkü müzayede fo
 | Servis `address already in use` diyor | 8000 portu dolu: başka bir terminalde servis açık kalmış, onu kapat. |
 | `annotations.json not found` | `--package` yolu yanlış: klasörün içinde `annotations.json` olmalı. |
 | `same file stem` hatası | Pakette aynı adlı iki fotoğraf var (örn. `a.jpg` ve `a.png`). Ekibe bildir. |
+| `npm install` sırasında `npm warn allow-scripts ... esbuild` | Zararsız, bir şey yapma. Arayüz yine çalışır. |
+| `pip` sırasında `A new release of pip is available` | Zararsız. |
 
 Testleri çalıştırmak istersen (isteğe bağlı):
 ```powershell
