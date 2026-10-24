@@ -71,6 +71,29 @@ Arayüz testleri (şüpheli mantığı):
 cd web && npm test
 ```
 
+## Pipeline (Kaggle) → araç
+
+`pipeline/` klasörü Kaggle'daki RAM++ / Grounding DINO / SAM 2 notebook'unu araca bağlar.
+
+- `make_package.py`: tespit sonuçlarını araç paketine çevirir (`annotations.json` + `images/`). Fotoğraf yönünü (EXIF) düzeltir, maskeleri sadeleştirilmiş çokgene çevirir, kopya kutuları temizler, adayları seçer.
+- `build_notebook.py`: arkadaşımızın notebook'undan Kaggle pilot notebook'unu üretir (`bidvision_pilot.ipynb`). Kurulum hücreleri aynen kalır, sona "Bölüm 3: paket üret" eklenir.
+- `test_make_package.py`: GPU'suz testler (27 test).
+
+```bash
+.venv\Scripts\python -m pip install -r pipeline\requirements.txt
+.venv\Scripts\python pipeline\test_make_package.py
+.venv\Scripts\python pipeline\build_notebook.py pipeline\<arkadaşın-notebook'u>.ipynb
+```
+
+Notebook dosyaları (`*.ipynb`) ekip onay verene kadar git'e girmez.
+
+Notebook incelemesinden çıkan notlar (ekiple paylaşılmalı):
+- `predict_with_classes()` sınıfları ayrı işlemiyor. O da tek metin kullanıp sonucu kelime içermeye göre eşliyor. Çözüm her sınıfı ayrı sormak, Bölüm 3 böyle yapıyor.
+- Koddaki liste 17 sınıf, belgede "18 + misc_item" yazıyor. Pilot 17 + `misc_item` kullanıyor.
+- RAM++ çıktısı Grounding DINO'ya bağlı değildi. Pilotta RAM++ atlanıyor.
+- Grounding DINO eklentisi `CUDA_HOME=""` ile derleniyor, GPU desteksiz kalabilir. Bölüm 3 bunu deneyip gerekirse işlemciye geçiyor.
+- Telefon fotoğraflarının EXIF yönü: Grounding DINO'nun yükleyicisi uygulamıyor, tarayıcı uyguluyor. Paket düzeltilmiş resmi kullanıyor.
+
 ## Git düzeni
 
 İsimlendirmeler İngilizce: repo, dal, etiket, commit mesajı, dosya/klasör, değişken ve fonksiyon adları. Belgeler (README, PLAN) Türkçe kalır.

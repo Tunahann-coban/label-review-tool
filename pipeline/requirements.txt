@@ -1,0 +1,5 @@
+# Only needed to run pipeline/test_make_package.py on your own machine.
+# Kaggle already has these.
+numpy==2.2.1
+opencv-python-headless==4.10.0.84
+pillow==11.1.0
