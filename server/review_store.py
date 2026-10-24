@@ -43,6 +43,7 @@ class ReviewStore:
     def _write(self, image_id, review):
         # Write to a temp file, then swap: a crash never leaves a half-written file.
         p = self.path(image_id)
+        self.dir.mkdir(exist_ok=True)  # may have been deleted while running (to reset reviews)
         tmp = p.with_suffix(".json.tmp")
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(review, f, ensure_ascii=False, indent=1)

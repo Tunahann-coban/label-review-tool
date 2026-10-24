@@ -92,6 +92,11 @@ def run(root):
     check("no temp file left", not any(p.suffix == ".tmp" for p in store.dir.iterdir()))
     check("other images still pending", store.status(2) == "pending")
 
+    shutil.rmtree(store.dir)  # user resets reviews while the service runs
+    check("reviews folder deleted -> image pending again", store.status(1) == "pending")
+    store.apply(1, a, "accept")
+    check("saving recreates a deleted reviews folder", store.status(1) == "reviewed")
+
 
 if __name__ == "__main__":
     main()
