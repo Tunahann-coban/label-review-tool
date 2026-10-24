@@ -47,21 +47,23 @@ def export_objects(pkg, store, image_id):
     return [o for o in objects if o["state"] != "deleted"]
 
 
-def build(pkg, store, out_dir):
-    """Write the dataset into out_dir (must not exist). Returns a summary."""
-    class_index = {c["id"]: i for i, c in enumerate(pkg.categories)}
-    (out_dir / "images").mkdir(parents=True)
-    (out_dir / "labels").mkdir()
-    (out_dir / MARKER).write_text("created by the label review tool\n", encoding="utf-8")
-    (out_dir / "data.yaml").write_text(data_yaml(pkg.categories), encoding="utf-8")
+def plan(pkg, store):
+    """Work out what an export would write, without touching the disk.
 
+    Returns (files, summary): files is [(image source path, image file name, label lines)].
+    Used both by the preview and by the real export, so they always agree.
+    """
+    class_index = {c["id"]: i for i, c in enumerate(pkg.categories)}
     # counted by class index, not name: two categories could share a name
     per_class = [0] * len(pkg.categories)
-    summary = {"images": 0, "objects": 0, "empty_images": 0, "warnings": []}
+    summary = {"images": 0, "objects": 0, "empty_images": 0, "untouched_objects": 0,
+               "pending_images": 0, "warnings": []}
     warn = summary["warnings"].append
+    files = []
 
     for image_id, img in pkg.images.items():
         if store.status(image_id) != "reviewed":
+            summary["pending_images"] += 1
             continue
         name, width, height = img["file_name"], img["width"], img["height"]
         stem = Path(name).stem  # unique, checked when the package is loaded
@@ -86,7 +88,7 @@ def build(pkg, store, out_dir):
                 continue
             parts = obj["segmentation"]
             if len(parts) > 1:
-                warn(f"{name}: nesne {obj['id']} {len(parts)} parçalı, her parça ayrı satır yazıldı")
+                warn(f"{name}: nesne {obj['id']} {len(parts)} parçalı, her parça ayrı satır")
             written = 0
             for poly in parts:
                 if len(poly) < 6 or len(poly) % 2:
@@ -97,16 +99,37 @@ def build(pkg, store, out_dir):
             if written:
                 summary["objects"] += 1
                 per_class[cls] += 1
+                # nobody looked at it: it goes in exactly as the pipeline gave it
+                summary["untouched_objects"] += obj["state"] == "auto"
 
-        # an empty file is written on purpose: a reviewed image with no objects is a background example
-        (out_dir / "labels" / f"{stem}.txt").write_text(
-            "".join(line + "\n" for line in lines), encoding="utf-8")
-        shutil.copy2(src, out_dir / "images" / name)
+        files.append((src, name, lines))
         summary["images"] += 1
         summary["empty_images"] += not lines
 
     summary["per_class"] = [{"index": i, "name": c["name"], "count": per_class[i]}
                             for i, c in enumerate(pkg.categories)]
+    return files, summary
+
+
+def build(pkg, store, out_dir):
+    """Write the dataset into out_dir (must not exist). Returns a summary."""
+    files, summary = plan(pkg, store)
+    (out_dir / "images").mkdir(parents=True)
+    (out_dir / "labels").mkdir()
+    (out_dir / MARKER).write_text("created by the label review tool\n", encoding="utf-8")
+    (out_dir / "data.yaml").write_text(data_yaml(pkg.categories), encoding="utf-8")
+    for src, name, lines in files:
+        # an empty file is written on purpose: a reviewed image with no objects is a background example
+        (out_dir / "labels" / f"{Path(name).stem}.txt").write_text(
+            "".join(line + "\n" for line in lines), encoding="utf-8")
+        shutil.copy2(src, out_dir / "images" / name)
+    return summary
+
+
+def preview(pkg, store, target):
+    """What export() would write, and where; nothing is written."""
+    _, summary = plan(pkg, store)
+    summary["path"] = str(Path(target).resolve())
     return summary
 
 

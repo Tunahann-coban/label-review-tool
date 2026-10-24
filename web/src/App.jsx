@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { fetchImage, fetchPackage, postExport, postReview } from './api'
-import ExportResult from './ExportResult'
+import { fetchExportPreview, fetchImage, fetchPackage, postExport, postReview } from './api'
+import ExportDialog from './ExportDialog'
+import Toast from './Toast'
 import ImageViewer from './ImageViewer'
 import ObjectList from './ObjectList'
 import SelectedPanel from './SelectedPanel'
@@ -23,7 +24,10 @@ export default function App() {
   const [saveError, setSaveError] = useState(null)
   const [threshold, setThreshold] = useState(DEFAULT_THRESHOLD)
   const [exporting, setExporting] = useState(false)
-  const [exportOutcome, setExportOutcome] = useState(null)  // { result } or { error }
+  // export window: null when closed, else { summary, done, loading, error }
+  const [exportDialog, setExportDialog] = useState(null)
+  const [toast, setToast] = useState(null)  // { kind, text }
+  const closeToast = useCallback(() => setToast(null), [])
   const [showCandidates, setShowCandidates] = useState(false)
   const [selectedCandidateId, setSelectedCandidateId] = useState(null)
 
@@ -126,13 +130,28 @@ export default function App() {
     setSelectedCandidateId(null)
   }
 
+  // The toolbar button only opens the window with a preview; the export itself
+  // runs from the button inside the window.
+  const openExport = async () => {
+    setExportDialog({ loading: true })
+    try {
+      setExportDialog({ summary: await fetchExportPreview() })
+    } catch (err) {
+      setExportDialog({ error: err.message })
+    }
+  }
+
+  const closeExport = useCallback(() => { if (!exporting) setExportDialog(null) }, [exporting])
+
   const runExport = async () => {
     setExporting(true)
-    setExportOutcome(null)
     try {
-      setExportOutcome({ result: await postExport() })
+      const result = await postExport()
+      setExportDialog({ summary: result, done: true })
+      setToast({ kind: 'success', text: `✓ Dışa aktarıldı: ${result.images} resim, ${result.objects} nesne → ${result.path}` })
     } catch (err) {
-      setExportOutcome({ error: err.message })
+      setExportDialog((d) => ({ ...d, error: err.message }))
+      setToast({ kind: 'error', text: `Dışa aktarılamadı: ${err.message}` })
     } finally {
       setExporting(false)
     }
@@ -141,6 +160,12 @@ export default function App() {
   useEffect(() => {
     const onKey = (e) => {
       if (e.ctrlKey || e.altKey || e.metaKey) return
+      // while the export window is open, only Esc works (closes it); Enter/Del must not
+      // touch the object behind the window
+      if (exportDialog) {
+        if (e.key === 'Escape') closeExport()
+        return
+      }
       if (e.key === 'Escape') {
         // also from a form field: Esc leaves the class list and drops the selection
         e.target.blur?.()
@@ -156,7 +181,7 @@ export default function App() {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [decide, go, clearSelection])
+  }, [decide, go, clearSelection, exportDialog, closeExport])
 
   if (error) return <main className="app"><p className="error">Hata: {error}</p></main>
   if (offline) {
@@ -174,11 +199,12 @@ export default function App() {
     <main className="app">
       <Toolbar images={pkg.images} index={index} onGo={go}
         nextPendingIndex={nextPendingIndex} onNextPending={() => setIndex(nextPendingIndex)}
-        saving={saving} saveError={saveError} onExport={runExport} exporting={exporting} />
-      {exportOutcome && (
-        <ExportResult result={exportOutcome.result} error={exportOutcome.error}
-          onClose={() => setExportOutcome(null)} />
+        saving={saving} saveError={saveError} onExport={openExport} exporting={exporting} />
+      {exportDialog && (
+        <ExportDialog summary={exportDialog.summary} done={exportDialog.done} loading={exportDialog.loading}
+          error={exportDialog.error} exporting={exporting} onExport={runExport} onClose={closeExport} />
       )}
+      <Toast toast={toast} onClose={closeToast} />
       {current ? (
         <div className="workspace">
           <ImageViewer detail={current} categoryNames={categoryNames}

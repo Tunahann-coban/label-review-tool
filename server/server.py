@@ -68,6 +68,12 @@ def save_review(image_id: int, decision: Decision):
     return image_detail(image_id)
 
 
+@app.get("/api/export/preview")
+def export_preview():
+    with store.lock:
+        return exporter.preview(pkg, store, export_dir)
+
+
 @app.post("/api/export")
 def export():
     with store.lock:  # no decision is half-saved while we read

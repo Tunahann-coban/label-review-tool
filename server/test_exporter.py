@@ -84,7 +84,13 @@ def run(tmp):
     store.apply(1, action="add", candidate_id=removed_cand["id"], category_id=added_cat)  # new-2
     store.apply(1, "new-2", "delete")                                                       # removed again
 
+    p = exporter.preview(pkg, store, out)
+    check("preview writes nothing", not out.exists() and not (tmp / "export.tmp").exists())
     s = exporter.export(pkg, store, out)
+    check("preview numbers equal the real export", p == s)
+    untouched = sum(1 for a in anns1 if a["id"] not in (changed["id"], deleted["id"]))
+    check(f"untouched objects counted ({untouched})", s["untouched_objects"] == untouched)
+    check("pending images counted", s["pending_images"] == 1)
 
     # --- layout ---
     check("only reviewed images copied", sorted(p.name for p in (out / "images").iterdir()) == ["img_001.jpg", "img_002.jpg"])

@@ -381,62 +381,114 @@ kbd {
   color: #b00020;
 }
 
-/* floats over the workspace, top right, so the layout below does not move */
-.export-result {
+/* export window: centered over a dimmed page */
+.dialog-backdrop {
   position: fixed;
-  top: 56px;
-  right: 24px;
-  z-index: 10;
-  width: 340px;
-  max-height: calc(100vh - 80px);
+  inset: 0;
+  z-index: 20;
+  background: rgba(0, 0, 0, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+
+.dialog {
+  width: 420px;
+  max-width: 100%;
+  max-height: calc(100vh - 32px);
   overflow-y: auto;
   box-sizing: border-box;
   background: #fff;
-  border: 1px solid #ccc;
-  border-radius: 8px;
-  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.15);
-  padding: 12px 14px;
+  border-radius: 10px;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.25);
+  padding: 16px 18px;
   font-size: 14px;
 }
 
-.export-head {
+.dialog-head {
   display: flex;
   justify-content: space-between;
   align-items: center;
 }
 
-.export-head button {
+.dialog-head h2 {
+  font-size: 17px;
+  margin: 0;
+}
+
+button.icon {
   border: none;
   background: none;
   font-size: 16px;
   cursor: pointer;
+  color: inherit;
 }
 
-.export-result p {
+.dialog p {
   margin: 8px 0;
 }
 
-.export-result .path {
+.dialog .path {
   word-break: break-all;
   font-size: 12px;
 }
 
-.export-result table {
+.note {
+  padding: 6px 8px;
+  border-radius: 4px;
+  background: #f2f2f2;
+  font-size: 13px;
+}
+
+.note.warn {
+  background: #fff1d6;
+  color: #7a4a00;
+}
+
+.dialog table {
   width: 100%;
   border-collapse: collapse;
   font-variant-numeric: tabular-nums;
 }
 
-.export-result th,
-.export-result td {
+.dialog th,
+.dialog td {
   text-align: left;
   padding: 3px 6px;
   border-bottom: 1px solid #eee;
 }
 
-.export-result td:last-child,
-.export-result th:last-child {
+.dialog td:last-child,
+.dialog th:last-child {
   text-align: right;
+}
+
+.dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.dialog-actions button {
+  padding: 6px 14px;
+  border-radius: 4px;
+  border: 1px solid #bbb;
+  background: #fff;
+  cursor: pointer;
+}
+
+.dialog-actions button.primary {
+  background: #2e9e4f;
+  border-color: #2e9e4f;
+  color: #fff;
+  font-weight: 600;
+}
+
+.dialog-actions button:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 
 .warnings {
@@ -444,4 +496,34 @@ kbd {
   padding-left: 18px;
   color: #8a5300;
   font-size: 13px;
+}
+
+/* notifications, bottom right, above everything */
+.toast-area {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 30;
+  max-width: min(440px, calc(100vw - 32px));
+}
+
+.toast {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.2);
+  font-size: 14px;
+  word-break: break-word;
+}
+
+.toast.success {
+  background: #1e7a3c;
+  color: #fff;
+}
+
+.toast.error {
+  background: #b00020;
+  color: #fff;
 }

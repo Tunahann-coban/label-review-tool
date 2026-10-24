@@ -14,6 +14,9 @@ export const fetchPackage = () => request('/api/package')
 export const fetchImage = (id) => request(`/api/images/${id}`)
 export const imageFileUrl = (id) => `/api/images/${id}/file`
 
+// What an export would write; nothing is written.
+export const fetchExportPreview = () => request('/api/export/preview')
+
 // Writes reviewed images to export/ as a YOLO-seg dataset; returns a summary.
 export const postExport = () => request('/api/export', { method: 'POST' })
 
