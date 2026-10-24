@@ -6,4 +6,6 @@ async function getJson(path) {
   return res.json()
 }
 
-export const fetchHello = () => getJson('/api/hello')
+export const fetchPackage = () => getJson('/api/package')
+export const fetchImage = (id) => getJson(`/api/images/${id}`)
+export const imageFileUrl = (id) => `/api/images/${id}/file`

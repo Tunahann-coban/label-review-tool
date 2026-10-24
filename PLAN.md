@@ -11,8 +11,8 @@ Takvim 24 Ekim'de 3 gün kaydırıldı. Önde gidebildiğimiz gün sonraki adım
 | Gün | Adım | İş | Durum |
 |---|---|---|---|
 | Çar 21 | — | Repo kurulumu (`label-review-tool`), `.gitignore`, plan | ✅ |
-| Cmt 24 | 0 | FastAPI servisi ↔ React sayfası "merhaba" | ⏳ |
-| Cmt 24 | 1 | Sahte paket, `annotations.json` okuma, önceki/sonraki | ⬜ |
+| Cmt 24 | 0 | FastAPI servisi ↔ React sayfası "merhaba" | ✅ |
+| Cmt 24 | 1 | Sahte paket, `annotations.json` okuma, önceki/sonraki | ✅ |
 | Paz 25 | 2 | Maskeleri SVG ile çiz, etiket adları 📸 | ⬜ |
 | Pzt 26 | 3 | Nesne listesi, seçme, resme tıklayarak seçme | ⬜ |
 | Pzt 26 | 4 | Onayla / sınıf değiştir / sil, `reviews/` kaydı 📸 | ⬜ |
@@ -21,6 +21,29 @@ Takvim 24 Ekim'de 3 gün kaydırıldı. Önde gidebildiğimiz gün sonraki adım
 | Çar 28 | 7 | YOLO-seg dışa aktarma 📸 | ⬜ |
 | Per 29 | 8 | Aday maskeler: göster, tıkla, sınıf ver, ekle | ⬜ |
 | Cum 30 | — | Tampon: hata düzeltme, çalıştırma talimatları | ⬜ |
+
+## Çalıştırma
+
+İlk kurulum (bir kere, proje klasöründe):
+
+```bash
+python -m venv .venv
+.venv\Scripts\python -m pip install -r server\requirements.txt
+.venv\Scripts\python make_sample_data.py
+cd web && npm install
+```
+
+Her seferinde iki terminal:
+
+```bash
+.venv\Scripts\python server\server.py --package sample_package --reviewer tunahan
+```
+
+```bash
+cd web && npm run dev
+```
+
+Sonra tarayıcıda http://localhost:5173 açılır.
 
 ## Git düzeni
 
@@ -36,4 +59,4 @@ Takvim 24 Ekim'de 3 gün kaydırıldı. Önde gidebildiğimiz gün sonraki adım
 Her gün sonunda bir satır: ne yapıldı, ne kaldı, sorun var mı.
 
 - **21 Ekim:** Yerel repo kuruldu, plan yazıldı.
-- **24 Ekim:** GitHub reposu bağlandı: https://github.com/Tunahann-coban/label-review-tool
+- **24 Ekim:** GitHub reposu bağlandı: https://github.com/Tunahann-coban/label-review-tool. Takvim 3 gün kaydırıldı. Adım 0 ve 1 bitti: servis paketi okuyor, sayfa 3 resim arasında geziyor.
