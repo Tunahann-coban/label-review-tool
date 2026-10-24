@@ -13,6 +13,7 @@ class Package:
             data = json.load(f)
 
         self.categories = data["categories"]
+        self.category_ids = {c["id"] for c in self.categories}
         self.images = {img["id"]: img for img in data["images"]}
         self.annotations = {}  # image_id -> [annotation]
         for ann in data["annotations"]:
@@ -24,13 +25,19 @@ class Package:
     def image_path(self, image_id):
         return self.root / "images" / self.images[image_id]["file_name"]
 
-    def image_list(self):
-        # status comes from reviews/ in step 6; everything is pending for now
-        return [{"id": img["id"], "file_name": img["file_name"], "status": "pending"}
-                for img in self.images.values()]
 
-    def image_detail(self, image_id):
-        objects = [{**ann, "state": "auto"} for ann in self.annotations.get(image_id, [])]
-        return {"image": self.images[image_id],
-                "objects": objects,
-                "candidates": self.candidates.get(image_id, [])}
+def merge_objects(annotations, review):
+    """Pipeline annotations with the review decisions applied on top."""
+    entries = {o["ann_id"]: o for o in (review or {}).get("objects", [])}
+    merged = []
+    for ann in annotations:
+        entry = entries.get(ann["id"])
+        obj = {**ann, "state": "auto"}
+        if entry:
+            obj["state"] = entry["state"]
+            if "category_id" in entry:
+                obj["category_id"] = entry["category_id"]
+            if entry["state"] == "changed":
+                obj["orig_category_id"] = entry["orig_category_id"]
+        merged.append(obj)
+    return merged

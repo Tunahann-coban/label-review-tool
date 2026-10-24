@@ -7,11 +7,20 @@ import argparse
 import uvicorn
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
+from pydantic import BaseModel
 
-from package import Package
+from package import Package, merge_objects
+from review_store import ReviewError, ReviewStore
 
 app = FastAPI(title="Label Review Tool")
 pkg: Package = None  # set in main()
+store: ReviewStore = None
+
+
+class Decision(BaseModel):
+    ann_id: int
+    action: str  # accept | change | delete
+    category_id: int | None = None
 
 
 def get_image_or_404(image_id):
@@ -19,15 +28,25 @@ def get_image_or_404(image_id):
         raise HTTPException(404, f"image {image_id} not found")
 
 
+def image_detail(image_id):
+    review = store.load(image_id)
+    return {"image": pkg.images[image_id],
+            "status": review["status"] if review else "pending",
+            "objects": merge_objects(pkg.annotations.get(image_id, []), review),
+            "candidates": pkg.candidates.get(image_id, [])}
+
+
 @app.get("/api/package")
 def package_info():
-    return {"categories": pkg.categories, "images": pkg.image_list()}
+    images = [{"id": img["id"], "file_name": img["file_name"], "status": store.status(img["id"])}
+              for img in pkg.images.values()]
+    return {"categories": pkg.categories, "images": images}
 
 
 @app.get("/api/images/{image_id}")
-def image_detail(image_id: int):
+def get_image(image_id: int):
     get_image_or_404(image_id)
-    return pkg.image_detail(image_id)
+    return image_detail(image_id)
 
 
 @app.get("/api/images/{image_id}/file")
@@ -36,14 +55,25 @@ def image_file(image_id: int):
     return FileResponse(pkg.image_path(image_id))
 
 
+@app.post("/api/images/{image_id}/review")
+def save_review(image_id: int, decision: Decision):
+    get_image_or_404(image_id)
+    try:
+        store.apply(image_id, decision.ann_id, decision.action, decision.category_id)
+    except ReviewError as e:
+        raise HTTPException(400, str(e))
+    return image_detail(image_id)
+
+
 def main():
-    global pkg
+    global pkg, store
     parser = argparse.ArgumentParser(description="Label review service")
     parser.add_argument("--package", default="sample_package", help="package folder")
     parser.add_argument("--reviewer", default="unknown", help="reviewer name")
     parser.add_argument("--port", type=int, default=8000)
     args = parser.parse_args()
     pkg = Package(args.package)
+    store = ReviewStore(pkg, args.reviewer)
     print(f"package: {pkg.root} ({len(pkg.images)} images), reviewer: {args.reviewer}", flush=True)
     uvicorn.run(app, host="127.0.0.1", port=args.port)
 

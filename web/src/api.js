@@ -1,11 +1,24 @@
 // All calls to the service go through this file.
 
-async function getJson(path) {
-  const res = await fetch(path)
-  if (!res.ok) throw new Error(`${path}: ${res.status}`)
+async function request(path, options) {
+  const res = await fetch(path, options)
+  if (!res.ok) {
+    const body = await res.json().catch(() => null)
+    // The service explains its own errors in `detail`; anything else means it is not reachable.
+    throw new Error(body?.detail ?? `servis yanıt vermiyor (${res.status}), servis açık mı?`)
+  }
   return res.json()
 }
 
-export const fetchPackage = () => getJson('/api/package')
-export const fetchImage = (id) => getJson(`/api/images/${id}`)
+export const fetchPackage = () => request('/api/package')
+export const fetchImage = (id) => request(`/api/images/${id}`)
 export const imageFileUrl = (id) => `/api/images/${id}/file`
+
+// decision: { ann_id, action: 'accept' | 'change' | 'delete', category_id? }
+// Returns the updated image detail.
+export const postReview = (id, decision) =>
+  request(`/api/images/${id}/review`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(decision),
+  })

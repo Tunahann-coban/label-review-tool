@@ -32,12 +32,97 @@ body {
     flex-direction: column;
   }
 
-  /* in a column, flex-basis would set the height, so size the list by width */
-  .workspace .object-list {
+  /* in a column, flex-basis would set the height, so size the sidebar by width */
+  .workspace .sidebar {
     flex: none;
     width: 100%;
-    box-sizing: border-box;
   }
+}
+
+.sidebar {
+  flex: 0 0 280px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  box-sizing: border-box;
+}
+
+.muted {
+  color: #666;
+  font-size: 13px;
+}
+
+kbd {
+  font: 11px ui-monospace, monospace;
+  padding: 1px 4px;
+  border: 1px solid #bbb;
+  border-bottom-width: 2px;
+  border-radius: 3px;
+  background: #fafafa;
+  color: #444;
+}
+
+.selected-panel {
+  background: #fff;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.selected-panel.empty {
+  color: #666;
+  font-size: 14px;
+}
+
+.selected-title {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.actions {
+  display: flex;
+  gap: 8px;
+}
+
+.actions button {
+  flex: 1;
+  padding: 6px 8px;
+  border-radius: 4px;
+  border: 1px solid #bbb;
+  background: #fff;
+  cursor: pointer;
+}
+
+.actions button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.actions .accept:not(:disabled):hover {
+  background: #e7f6ea;
+  border-color: #2e9e4f;
+}
+
+.actions .delete:not(:disabled):hover {
+  background: #fdeaea;
+  border-color: #c62828;
+}
+
+.class-select {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+}
+
+.class-select select {
+  flex: 1;
+  padding: 4px;
 }
 
 /* The wrapper shrinks to the image; the SVG covers exactly the same box. */
@@ -75,8 +160,7 @@ body {
 }
 
 .object-list {
-  flex: 0 0 260px;
-  max-height: 80vh;
+  max-height: 60vh;
   overflow-y: auto;
   background: #fff;
   border: 1px solid #ddd;
@@ -129,6 +213,31 @@ body {
 .object-list .score {
   color: #666;
   font-variant-numeric: tabular-nums;
+}
+
+.object-list .state-icon {
+  width: 16px;
+  text-align: center;
+}
+
+.object-list .state-accepted .state-icon {
+  color: #2e9e4f;
+}
+
+.object-list .state-changed .state-icon {
+  color: #c77700;
+}
+
+.object-list .state-deleted {
+  color: #999;
+}
+
+.object-list .state-deleted .name {
+  text-decoration: line-through;
+}
+
+.object-list .state-deleted .state-icon {
+  color: #c62828;
 }
 
 .error {

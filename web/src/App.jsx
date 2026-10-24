@@ -1,7 +1,11 @@
-import { useEffect, useMemo, useState } from 'react'
-import { fetchImage, fetchPackage } from './api'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { fetchImage, fetchPackage, postReview } from './api'
 import ImageViewer from './ImageViewer'
 import ObjectList from './ObjectList'
+import SelectedPanel from './SelectedPanel'
+
+// Keyboard shortcuts must not fire while typing in a form field.
+const isFormField = (el) => ['INPUT', 'SELECT', 'TEXTAREA'].includes(el?.tagName)
 
 export default function App() {
   const [pkg, setPkg] = useState(null)
@@ -10,6 +14,8 @@ export default function App() {
   const [error, setError] = useState(null)
   const [offline, setOffline] = useState(false)
   const [selectedId, setSelectedId] = useState(null)
+  const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState(null)
 
   // Retry until the service is up, so the page can be opened first
   useEffect(() => {
@@ -27,6 +33,7 @@ export default function App() {
   useEffect(() => {
     if (imageId == null) return
     setSelectedId(null)
+    setSaveError(null)
     let stale = false  // ignore a slow answer for an image we already left
     fetchImage(imageId)
       .then((data) => { if (!stale) setDetail(data) })
@@ -40,6 +47,53 @@ export default function App() {
     [pkg],
   )
 
+  const total = pkg?.images.length ?? 0
+  const go = useCallback(
+    (delta) => setIndex((i) => Math.min(total - 1, Math.max(0, i + delta))),
+    [total],
+  )
+
+  const current = detail?.image.id === imageId ? detail : null
+  const selected = current?.objects.find((o) => o.id === selectedId) ?? null
+
+  // Every decision is saved right away; the service answers with the updated image.
+  const decide = useCallback(async (action, categoryId) => {
+    if (!selected || saving) return
+    // skip decisions that would change nothing, so the log stays meaningful
+    if (action === 'accept' && ['accepted', 'changed'].includes(selected.state)) return
+    if (action === 'delete' && selected.state === 'deleted') return
+    if (action === 'change' && categoryId === selected.category_id) return
+    setSaving(true)
+    setSaveError(null)
+    try {
+      const updated = await postReview(current.image.id, {
+        ann_id: selected.id, action, category_id: categoryId ?? null,
+      })
+      setDetail(updated)
+      setPkg((p) => ({
+        ...p,
+        images: p.images.map((img) => (img.id === updated.image.id ? { ...img, status: updated.status } : img)),
+      }))
+    } catch (err) {
+      setSaveError(err.message)
+    } finally {
+      setSaving(false)
+    }
+  }, [current, selected, saving])
+
+  useEffect(() => {
+    const onKey = (e) => {
+      if (isFormField(e.target) || e.ctrlKey || e.altKey || e.metaKey) return
+      if (e.key === 'Enter') decide('accept')
+      else if (e.key === 'Delete') decide('delete')
+      else if (e.key === 'n' || e.key === 'N') go(1)
+      else return
+      e.preventDefault()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [decide, go])
+
   if (error) return <main className="app"><p className="error">Hata: {error}</p></main>
   if (offline) {
     return (
@@ -52,23 +106,25 @@ export default function App() {
   }
   if (!pkg) return <main className="app">Yükleniyor...</main>
 
-  const total = pkg.images.length
-  const go = (delta) => setIndex((i) => Math.min(total - 1, Math.max(0, i + delta)))
-  const current = detail?.image.id === imageId ? detail : null
-
   return (
     <main className="app">
       <header className="toolbar">
         <button onClick={() => go(-1)} disabled={index === 0}>← Önceki</button>
         <span>{index + 1} / {total} · {pkg.images[index].file_name}</span>
-        <button onClick={() => go(1)} disabled={index === total - 1}>Sonraki →</button>
+        <button onClick={() => go(1)} disabled={index === total - 1}>Sonraki → <kbd>N</kbd></button>
+        {saving && <span className="muted">kaydediliyor...</span>}
+        {saveError && <span className="error">Kaydedilemedi: {saveError}</span>}
       </header>
       {current ? (
         <div className="workspace">
           <ImageViewer detail={current} categoryNames={categoryNames}
             selectedId={selectedId} onSelect={setSelectedId} />
-          <ObjectList objects={current.objects} categoryNames={categoryNames}
-            selectedId={selectedId} onSelect={setSelectedId} />
+          <aside className="sidebar">
+            <SelectedPanel object={selected} categories={pkg.categories}
+              categoryNames={categoryNames} onDecide={decide} saving={saving} />
+            <ObjectList objects={current.objects} categoryNames={categoryNames}
+              selectedId={selectedId} onSelect={setSelectedId} />
+          </aside>
         </div>
       ) : (
         <p>Yükleniyor...</p>

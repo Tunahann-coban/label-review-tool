@@ -35,7 +35,11 @@ export default function MaskOverlay({ image, objects, categoryNames, selectedId,
   const fontSize = Math.max(12, Math.round(width / 50))
 
   // Color follows the object's position in the package, not the draw order.
-  const items = objects.map((obj, i) => ({ obj, color: objectColor(i) }))
+  // Deleted objects are not drawn and cannot be clicked on the image.
+  const items = objects
+    .map((obj, i) => ({ obj, color: objectColor(i) }))
+    .filter((it) => it.obj.state !== 'deleted')
+  const visible = items.map((it) => it.obj)
   // Selected object is drawn last so it sits on top.
   const ordered = [
     ...items.filter((it) => it.obj.id !== selectedId),
@@ -44,7 +48,7 @@ export default function MaskOverlay({ image, objects, categoryNames, selectedId,
 
   const handleClick = (e) => {
     const p = toImagePoint(e.currentTarget, e.clientX, e.clientY)
-    onSelect(objectAt(p.x, p.y, objects)?.id ?? null)
+    onSelect(objectAt(p.x, p.y, visible)?.id ?? null)
   }
 
   return (
