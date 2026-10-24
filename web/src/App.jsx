@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { fetchImage, fetchPackage } from './api'
 import ImageViewer from './ImageViewer'
+import ObjectList from './ObjectList'
 
 export default function App() {
   const [pkg, setPkg] = useState(null)
@@ -8,6 +9,7 @@ export default function App() {
   const [detail, setDetail] = useState(null)
   const [error, setError] = useState(null)
   const [offline, setOffline] = useState(false)
+  const [selectedId, setSelectedId] = useState(null)
 
   // Retry until the service is up, so the page can be opened first
   useEffect(() => {
@@ -24,6 +26,7 @@ export default function App() {
 
   useEffect(() => {
     if (imageId == null) return
+    setSelectedId(null)
     let stale = false  // ignore a slow answer for an image we already left
     fetchImage(imageId)
       .then((data) => { if (!stale) setDetail(data) })
@@ -61,10 +64,12 @@ export default function App() {
         <button onClick={() => go(1)} disabled={index === total - 1}>Sonraki →</button>
       </header>
       {current ? (
-        <>
-          <ImageViewer detail={current} categoryNames={categoryNames} />
-          <p>{current.objects.length} nesne, {current.candidates.length} aday</p>
-        </>
+        <div className="workspace">
+          <ImageViewer detail={current} categoryNames={categoryNames}
+            selectedId={selectedId} onSelect={setSelectedId} />
+          <ObjectList objects={current.objects} categoryNames={categoryNames}
+            selectedId={selectedId} onSelect={setSelectedId} />
+        </div>
       ) : (
         <p>Yükleniyor...</p>
       )}

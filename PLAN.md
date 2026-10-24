@@ -14,7 +14,7 @@ Takvim 24 Ekim'de 3 gün kaydırıldı. Önde gidebildiğimiz gün sonraki adım
 | Cmt 24 | 0 | FastAPI servisi ↔ React sayfası "merhaba" | ✅ |
 | Cmt 24 | 1 | Sahte paket, `annotations.json` okuma, önceki/sonraki | ✅ |
 | Paz 25 | 2 | Maskeleri SVG ile çiz, etiket adları 📸 | ✅ (24 Ekim'de, bir gün önden) |
-| Pzt 26 | 3 | Nesne listesi, seçme, resme tıklayarak seçme | ⬜ |
+| Pzt 26 | 3 | Nesne listesi, seçme, resme tıklayarak seçme | ✅ (24 Ekim'de, iki gün önden) |
 | Pzt 26 | 4 | Onayla / sınıf değiştir / sil, `reviews/` kaydı 📸 | ⬜ |
 | Sal 27 | 5 | Şüpheliler: eşik kaydırıcısı, rozet, öne alma | ⬜ |
 | Sal 27 | 6 | Resim durumu, ilerleme sayacı, sıradaki bekleyen | ⬜ |
@@ -59,4 +59,4 @@ Sonra tarayıcıda http://localhost:5173 açılır.
 Her gün sonunda bir satır: ne yapıldı, ne kaldı, sorun var mı.
 
 - **21 Ekim:** Yerel repo kuruldu, plan yazıldı.
-- **24 Ekim:** GitHub reposu bağlandı: https://github.com/Tunahann-coban/label-review-tool. Takvim 3 gün kaydırıldı. Adım 0 ve 1 bitti: servis paketi okuyor, sayfa 3 resim arasında geziyor. Servis kapalıyken sayfa uyarı verip tekrar deniyor. Adım 2 de bitti: maskeler her nesneye ayrı renkle, sınıf adı ve skorla çiziliyor. Ekran küçülünce de hizalı kalıyor (%59 ölçekte test edildi).
+- **24 Ekim:** GitHub reposu bağlandı: https://github.com/Tunahann-coban/label-review-tool. Takvim 3 gün kaydırıldı. Adım 0 ve 1 bitti: servis paketi okuyor, sayfa 3 resim arasında geziyor. Servis kapalıyken sayfa uyarı verip tekrar deniyor. Adım 2 de bitti: maskeler her nesneye ayrı renkle, sınıf adı ve skorla çiziliyor. Ekran küçülünce de hizalı kalıyor (%59 ölçekte test edildi). Adım 3 bitti: sağda nesne listesi, listeden ya da resimden seçme, kalın kenarla vurgu. Örtüşen maskelerde küçük olan seçiliyor. Boş alana tıklayınca seçim kalkıyor, resim değişince sıfırlanıyor.

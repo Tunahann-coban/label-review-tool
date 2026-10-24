@@ -19,10 +19,32 @@ body {
   margin-bottom: 12px;
 }
 
+/* Image on the left, object list on the right. The image shrinks to make room;
+   only on very narrow screens does the list drop below. */
+.workspace {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+}
+
+@media (max-width: 640px) {
+  .workspace {
+    flex-direction: column;
+  }
+
+  /* in a column, flex-basis would set the height, so size the list by width */
+  .workspace .object-list {
+    flex: none;
+    width: 100%;
+    box-sizing: border-box;
+  }
+}
+
 /* The wrapper shrinks to the image; the SVG covers exactly the same box. */
 .viewer {
   position: relative;
-  display: inline-block;
+  flex: 0 1 auto;
+  min-width: 0;
   line-height: 0;
 }
 
@@ -46,6 +68,67 @@ body {
   paint-order: stroke;
   font-weight: 600;
   pointer-events: none;
+}
+
+.overlay .mask {
+  cursor: pointer;
+}
+
+.object-list {
+  flex: 0 0 260px;
+  max-height: 80vh;
+  overflow-y: auto;
+  background: #fff;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+}
+
+.object-list h2 {
+  font-size: 14px;
+  margin: 0;
+  padding: 10px 12px;
+  border-bottom: 1px solid #eee;
+}
+
+.object-list ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.object-list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  cursor: pointer;
+  border-left: 4px solid transparent;
+}
+
+.object-list li:hover {
+  background: #f2f2f2;
+}
+
+.object-list li.selected {
+  background: #e6efff;
+  border-left-color: #2f6fec;
+  font-weight: 600;
+}
+
+.object-list .swatch {
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  flex: none;
+}
+
+.object-list .name {
+  flex: 1;
+}
+
+.object-list .score {
+  color: #666;
+  font-variant-numeric: tabular-nums;
 }
 
 .error {
