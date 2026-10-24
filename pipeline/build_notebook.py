@@ -1,11 +1,11 @@
-"""Builds the Kaggle pilot notebook from the teammate's notebook + our package step.
+"""Adds our package step to the teammate's Kaggle notebook, without changing their cells.
 
-    .venv\\Scripts\\python pipeline\\build_notebook.py pipeline\\<teammate>.ipynb
+    .venv\\Scripts\\python pipeline\\build_notebook.py <teammate>.ipynb
 
-Writes pipeline/bidvision_pilot.ipynb. The teammate's file is not changed.
-Kept as is: the Grounded-SAM-2 setup cells. Left out: RAM++ (not used in the pilot)
-and the one-image test cells (their placeholder path stops "Run All").
-Added: Part 3, which runs Grounding DINO + SAM 2 over the dataset and writes the package.
+Writes pipeline/bidvision_pilot.ipynb: every teammate cell, unchanged and in order, plus
+"Part 3" inserted right after their setup (after the last pip install cell). It has to sit
+before their one-image test cells: those use a placeholder path, the last ones raise an
+error, and "Run All" stops at the first error.
 """
 import json
 import sys
@@ -14,35 +14,8 @@ from pathlib import Path
 HERE = Path(__file__).parent
 IMAGE_DIR = "/kaggle/input/datasets/tunahancoban55/bidvision-pilot"
 
-# Teammate cells to keep, checked by their first line so a changed notebook is noticed.
-KEEP = {
-    11: "## Bölüm 2",
-    12: "%cd /kaggle/working",
-    13: "SAM2'nin CUDA eklentisini",
-    14: "import os",
-    15: "Grounding DINO'nun CUDA uzantısını",
-    16: 'os.environ["CUDA_HOME"] = ""',
-    17: "import sys",
-    18: "%cd checkpoints",
-    19: "Eksik bağımlılıkları",
-    20: "!pip install supervision addict yapf -q",
-}
-
-INTRO = f"""# BidVision Pilot: paket üretimi
-
-Bu notebook depo fotoğraflarında **Grounding DINO** ile nesne arar, **SAM 2** ile maskesini çıkarır
-ve sonucu etiket inceleme aracının okuyacağı pakete yazar (`bidvision_package.zip`).
-
-**Çalıştırmadan önce (sağ panel):**
-1. **Accelerator → GPU T4 x2** (ya da P100)
-2. **Internet → On**
-3. **Input**: `bidvision-pilot` dataset'i ekli olmalı (`{IMAGE_DIR}`)
-
-Sonra **Run All**. Kurulum yaklaşık 10–15 dakika, her fotoğraf yaklaşık 10–30 saniye.
-
-Bölüm 2 arkadaşımızın kurulum hücreleridir, değiştirilmedi. Pilot notebook'tan bilerek çıkarılanlar:
-RAM++ (Bölüm 1; pilotta kullanılmıyor) ve tek fotoğraflık test hücreleri.
-"""
+# Part 3 goes right after this teammate cell (the last setup step).
+INSERT_AFTER = "!pip install supervision addict yapf -q"
 
 PART3_MD = """## Bölüm 3: Paket üret (etiket inceleme aracı için)
 
@@ -209,25 +182,29 @@ def cell(kind, text):
 def main():
     src = Path(sys.argv[1])
     nb = json.loads(src.read_text(encoding="utf-8"))
-    kept = []
-    for i, first_line in KEEP.items():
-        c = nb["cells"][i]
-        text = "".join(c["source"])
-        if not text.lstrip().startswith(first_line):
-            sys.exit(f"cell [{i}] changed (expected it to start with {first_line!r}); update KEEP")
-        kept.append(cell(c["cell_type"], text))
+    originals = nb["cells"]
+    texts = ["".join(c["source"]) for c in originals]
+    at = [i for i, t in enumerate(texts) if t.lstrip().startswith(INSERT_AFTER)]
+    if len(at) != 1:
+        sys.exit(f"setup cell starting with {INSERT_AFTER!r} not found exactly once; update INSERT_AFTER")
 
     package_code = (HERE / "make_package.py").read_text(encoding="utf-8")
-    cells = ([cell("markdown", INTRO)] + kept
-             + [cell("markdown", PART3_MD),
-                cell("code", "%%writefile /kaggle/working/make_package.py\n" + package_code),
-                cell("code", RUN),
-                cell("code", SHOW)])
-    out = {"cells": cells, "metadata": nb.get("metadata", {}), "nbformat": 4,
-           "nbformat_minor": nb.get("nbformat_minor", 5)}
+    ours = [cell("markdown", PART3_MD),
+            cell("code", "%%writefile /kaggle/working/make_package.py\n" + package_code),
+            cell("code", RUN),
+            cell("code", SHOW)]
+    for c in ours:
+        c["metadata"]["label_review_tool"] = True  # marks the cells we added
+    cells = originals[:at[0] + 1] + ours + originals[at[0] + 1:]
+
+    # the teammate's cells must come out exactly as they went in
+    kept = [c for c in cells if not c["metadata"].get("label_review_tool")]
+    assert ["".join(c["source"]) for c in kept] == texts, "a teammate cell changed"
+
+    out = dict(nb, cells=cells)
     dest = HERE / "bidvision_pilot.ipynb"
     dest.write_text(json.dumps(out, ensure_ascii=False, indent=1), encoding="utf-8")
-    print(f"written: {dest} ({len(cells)} cells)")
+    print(f"written: {dest}: {len(originals)} teammate cells unchanged + {len(ours)} added after cell [{at[0]}]")
 
 
 if __name__ == "__main__":

@@ -76,7 +76,7 @@ cd web && npm test
 `pipeline/` klasörü Kaggle'daki RAM++ / Grounding DINO / SAM 2 notebook'unu araca bağlar.
 
 - `make_package.py`: tespit sonuçlarını araç paketine çevirir (`annotations.json` + `images/`). Fotoğraf yönünü (EXIF) düzeltir, maskeleri sadeleştirilmiş çokgene çevirir, kopya kutuları temizler, adayları seçer.
-- `build_notebook.py`: arkadaşımızın notebook'undan Kaggle pilot notebook'unu üretir (`bidvision_pilot.ipynb`). Kurulum hücreleri aynen kalır, sona "Bölüm 3: paket üret" eklenir.
+- `build_notebook.py`: arkadaşımızın notebook'una dokunmadan "Bölüm 3: paket üret" hücrelerini ekler ve `bidvision_pilot.ipynb` dosyasını yazar. Arkadaşımızın bütün hücreleri aynen ve aynı sırada kalır. Bölüm 3, kurulumun hemen arkasına ve onun tek fotoğraflık testlerinin önüne girer, çünkü o testler yer tutucu yol yüzünden hata verip "Run All"ı durdurur.
 - `test_make_package.py`: GPU'suz testler (27 test).
 
 ```bash
