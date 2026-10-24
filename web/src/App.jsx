@@ -4,6 +4,8 @@ import ImageViewer from './ImageViewer'
 import ObjectList from './ObjectList'
 import SelectedPanel from './SelectedPanel'
 import { DEFAULT_THRESHOLD, orderObjects, unknownCategoryIds } from './suspects'
+import Toolbar from './Toolbar'
+import { findNextPending } from './navigation'
 
 // Keyboard shortcuts must not fire while typing in a form field.
 const isFormField = (el) => ['INPUT', 'SELECT', 'TEXTAREA'].includes(el?.tagName)
@@ -65,6 +67,7 @@ export default function App() {
     [current, threshold, unknownIds],
   )
   const selectedReasons = orderedItems.find((it) => it.obj.id === selectedId)?.reasons ?? []
+  const nextPendingIndex = pkg ? findNextPending(pkg.images, index) : null
 
   // Every decision is saved right away; the service answers with the updated image.
   const decide = useCallback(async (action, categoryId) => {
@@ -118,13 +121,9 @@ export default function App() {
 
   return (
     <main className="app">
-      <header className="toolbar">
-        <button onClick={() => go(-1)} disabled={index === 0}>← Önceki</button>
-        <span>{index + 1} / {total} · {pkg.images[index].file_name}</span>
-        <button onClick={() => go(1)} disabled={index === total - 1}>Sonraki → <kbd>N</kbd></button>
-        {saving && <span className="muted">kaydediliyor...</span>}
-        {saveError && <span className="error">Kaydedilemedi: {saveError}</span>}
-      </header>
+      <Toolbar images={pkg.images} index={index} onGo={go}
+        nextPendingIndex={nextPendingIndex} onNextPending={() => setIndex(nextPendingIndex)}
+        saving={saving} saveError={saveError} />
       {current ? (
         <div className="workspace">
           <ImageViewer detail={current} categoryNames={categoryNames}

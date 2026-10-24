@@ -8,7 +8,7 @@
     "build": "vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "test": "node tests/suspects.test.mjs"
+    "test": "node tests/suspects.test.mjs && node tests/navigation.test.mjs"
   },
   "dependencies": {
     "react": "^18.3.1",
