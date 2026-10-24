@@ -7,8 +7,17 @@ export default function App() {
   const [detail, setDetail] = useState(null)
   const [error, setError] = useState(null)
 
+  const [offline, setOffline] = useState(false)
+
+  // Retry until the service is up, so the page can be opened first
   useEffect(() => {
-    fetchPackage().then(setPkg).catch((err) => setError(err.message))
+    let timer
+    const load = () =>
+      fetchPackage()
+        .then((data) => { setPkg(data); setOffline(false) })
+        .catch(() => { setOffline(true); timer = setTimeout(load, 2000) })
+    load()
+    return () => clearTimeout(timer)
   }, [])
 
   const imageId = pkg?.images[index]?.id
@@ -19,6 +28,15 @@ export default function App() {
   }, [imageId])
 
   if (error) return <main className="app"><p className="error">Hata: {error}</p></main>
+  if (offline) {
+    return (
+      <main className="app">
+        <p className="error">Servise ulaşılamıyor. Servisi başlattın mı?</p>
+        <code>.venv\Scripts\python server\server.py --package sample_package --reviewer tunahan</code>
+        <p>Servis açılınca sayfa kendiliğinden yüklenecek.</p>
+      </main>
+    )
+  }
   if (!pkg) return <main className="app">Yükleniyor...</main>
 
   const total = pkg.images.length
