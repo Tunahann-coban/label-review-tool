@@ -24,6 +24,8 @@ Takvim 24 Ekim'de 3 gün kaydırıldı. Önde gidebildiğimiz gün sonraki adım
 
 ## Çalıştırma
 
+Yeni bir bilgisayarda ilk kez kurulum için: [SETUP.md](SETUP.md) (Windows ve Mac, adım adım).
+
 İlk kurulum (bir kere, proje klasöründe):
 
 ```bash
