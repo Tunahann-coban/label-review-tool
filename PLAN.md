@@ -8,7 +8,7 @@ Durum: ✅ bitti · ⏳ sürüyor · ⬜ başlamadı · 📸 Gölge'ye ekran gö
 
 | Gün | Adım | İş | Durum |
 |---|---|---|---|
-| Çar 21 | — | Repo kurulumu (`label-review-tool`), `.gitignore`, plan | ⏳ |
+| Çar 21 | — | Repo kurulumu (`label-review-tool`), `.gitignore`, plan | ✅ |
 | Çar 21 | 0 | FastAPI servisi ↔ React sayfası "merhaba" | ⬜ |
 | Çar 21 | 1 | Sahte paket, `annotations.json` okuma, önceki/sonraki | ⬜ |
 | Per 22 | 2 | Maskeleri SVG ile çiz, etiket adları 📸 | ⬜ |
@@ -33,4 +33,5 @@ Durum: ✅ bitti · ⏳ sürüyor · ⬜ başlamadı · 📸 Gölge'ye ekran gö
 
 Her gün sonunda bir satır: ne yapıldı, ne kaldı, sorun var mı.
 
-- **21 Ekim:** Repo kuruldu.
+- **21 Ekim:** Yerel repo kuruldu, plan yazıldı.
+- **24 Ekim:** GitHub reposu bağlandı: https://github.com/Tunahann-coban/label-review-tool
