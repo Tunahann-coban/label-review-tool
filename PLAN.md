@@ -4,21 +4,23 @@ Ayrıntılı kapsam ve veri biçimi için [README.md](README.md). Bu dosya sadec
 
 Durum: ✅ bitti · ⏳ sürüyor · ⬜ başlamadı · 📸 Gölge'ye ekran görüntüsü
 
-## Hafta 1 (21–27 Ekim 2026)
+## Hafta 1 (21–30 Ekim 2026)
+
+Takvim 24 Ekim'de 3 gün kaydırıldı. Önde gidebildiğimiz gün sonraki adıma geçeriz.
 
 | Gün | Adım | İş | Durum |
 |---|---|---|---|
 | Çar 21 | — | Repo kurulumu (`label-review-tool`), `.gitignore`, plan | ✅ |
-| Çar 21 | 0 | FastAPI servisi ↔ React sayfası "merhaba" | ⬜ |
-| Çar 21 | 1 | Sahte paket, `annotations.json` okuma, önceki/sonraki | ⬜ |
-| Per 22 | 2 | Maskeleri SVG ile çiz, etiket adları 📸 | ⬜ |
-| Cum 23 | 3 | Nesne listesi, seçme, resme tıklayarak seçme | ⬜ |
-| Cum 23 | 4 | Onayla / sınıf değiştir / sil, `reviews/` kaydı 📸 | ⬜ |
-| Cmt 24 | 5 | Şüpheliler: eşik kaydırıcısı, rozet, öne alma | ⬜ |
-| Cmt 24 | 6 | Resim durumu, ilerleme sayacı, sıradaki bekleyen | ⬜ |
-| Paz 25 | 7 | YOLO-seg dışa aktarma 📸 | ⬜ |
-| Pzt 26 | 8 | Aday maskeler: göster, tıkla, sınıf ver, ekle | ⬜ |
-| Sal 27 | — | Tampon: hata düzeltme, çalıştırma talimatları | ⬜ |
+| Cmt 24 | 0 | FastAPI servisi ↔ React sayfası "merhaba" | ⏳ |
+| Cmt 24 | 1 | Sahte paket, `annotations.json` okuma, önceki/sonraki | ⬜ |
+| Paz 25 | 2 | Maskeleri SVG ile çiz, etiket adları 📸 | ⬜ |
+| Pzt 26 | 3 | Nesne listesi, seçme, resme tıklayarak seçme | ⬜ |
+| Pzt 26 | 4 | Onayla / sınıf değiştir / sil, `reviews/` kaydı 📸 | ⬜ |
+| Sal 27 | 5 | Şüpheliler: eşik kaydırıcısı, rozet, öne alma | ⬜ |
+| Sal 27 | 6 | Resim durumu, ilerleme sayacı, sıradaki bekleyen | ⬜ |
+| Çar 28 | 7 | YOLO-seg dışa aktarma 📸 | ⬜ |
+| Per 29 | 8 | Aday maskeler: göster, tıkla, sınıf ver, ekle | ⬜ |
+| Cum 30 | — | Tampon: hata düzeltme, çalıştırma talimatları | ⬜ |
 
 ## Git düzeni
 
