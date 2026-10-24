@@ -5,7 +5,7 @@ import Toast from './Toast'
 import ImageViewer from './ImageViewer'
 import ObjectList from './ObjectList'
 import SelectedPanel from './SelectedPanel'
-import { DEFAULT_THRESHOLD, orderObjects, unknownCategoryIds } from './suspects'
+import { DEFAULT_THRESHOLD, catchAllCategories, orderObjects } from './suspects'
 import Toolbar from './Toolbar'
 import { findNextPending } from './navigation'
 import { availableCandidates } from './candidates'
@@ -72,14 +72,14 @@ export default function App() {
     [total],
   )
 
-  const unknownIds = useMemo(() => unknownCategoryIds(pkg?.categories ?? []), [pkg])
+  const catchAll = useMemo(() => catchAllCategories(pkg?.categories ?? []), [pkg])
 
   const current = detail?.image.id === imageId ? detail : null
   const selected = current?.objects.find((o) => o.id === selectedId) ?? null
 
   const orderedItems = useMemo(
-    () => (current ? orderObjects(current.objects, threshold, unknownIds) : []),
-    [current, threshold, unknownIds],
+    () => (current ? orderObjects(current.objects, threshold, catchAll) : []),
+    [current, threshold, catchAll],
   )
   const selectedReasons = orderedItems.find((it) => it.obj.id === selectedId)?.reasons ?? []
   const nextPendingIndex = pkg ? findNextPending(pkg.images, index) : null

@@ -1,17 +1,26 @@
 // Checks for src/suspects.js. Run: npm test
-import { orderObjects, suspectReasons, unknownCategoryIds } from '../src/suspects.js'
+import { catchAllCategories, orderObjects, suspectReasons } from '../src/suspects.js'
 let fail = 0
 const check = (name, cond) => { console.log(cond ? 'OK  ' : 'FAIL', name); if (!cond) fail++ }
 const cats = [{ id: 1, name: 'box' }, { id: 2, name: 'tote' }, { id: 8, name: 'Unknown ' }]
-const unk = unknownCategoryIds(cats)
+const unk = catchAllCategories(cats)
 check('unknown found by name, case/space-insensitive', unk.has(8) && unk.size === 1)
-check('no unknown category -> empty set', unknownCategoryIds([{ id: 1, name: 'box' }]).size === 0)
+check('no catch-all category -> empty', catchAllCategories([{ id: 1, name: 'box' }]).size === 0)
+
+// BidVision: misc_item is the catch-all class
+const bid = catchAllCategories([{ id: 1, name: 'tv' }, { id: 19, name: 'misc_item' }])
+check('misc_item is a catch-all class', bid.has(19) && bid.size === 1)
+check('misc_item object is suspect, reason names it',
+  suspectReasons({ id: 5, score: 0.9, category_id: 19, state: 'auto' }, 0.5, bid)[0] === 'sınıf: misc_item')
+check('both names in one package are caught',
+  catchAllCategories([{ id: 1, name: 'MISC_ITEM' }, { id: 2, name: 'unknown' }, { id: 3, name: 'tv' }]).size === 2)
+check('similar names are not caught', catchAllCategories([{ id: 1, name: 'misc' }, { id: 2, name: 'unknown box' }]).size === 0)
 
 const o = (id, score, category_id, extra = {}) => ({ id, score, category_id, state: 'auto', ...extra })
 check('score below threshold', suspectReasons(o(1, 0.49, 1), 0.5, unk).length === 1)
 check('score exactly at threshold is NOT suspect', suspectReasons(o(1, 0.5, 1), 0.5, unk).length === 0)
 check('null score is not suspect by score', suspectReasons(o(1, null, 1), 0.5, unk).length === 0)
-check('unknown with high score is suspect', suspectReasons(o(1, 0.95, 8), 0.5, unk)[0] === 'sınıf: unknown')
+check('unknown with high score is suspect', suspectReasons(o(1, 0.95, 8), 0.5, unk)[0] === 'sınıf: Unknown')
 check('low score + unknown gives two reasons', suspectReasons(o(1, 0.1, 8), 0.5, unk).length === 2)
 check('unknown changed to box stays suspect (stable list)',
   suspectReasons(o(1, 0.9, 1, { state: 'changed', orig_category_id: 8 }), 0.5, unk).length === 1)
