@@ -5,11 +5,16 @@ import threading
 from datetime import datetime
 from pathlib import Path
 
-ACTIONS = ("accept", "change", "delete")
+ACTIONS = ("accept", "change", "delete", "add")
 
 
 def now():
     return datetime.now().isoformat(timespec="seconds")
+
+
+def is_added(entry):
+    """Objects the reviewer added from a candidate (kept even when deleted)."""
+    return entry is not None and "from_candidate" in entry
 
 
 class ReviewError(ValueError):
@@ -49,40 +54,34 @@ class ReviewStore:
             json.dump(review, f, ensure_ascii=False, indent=1)
         os.replace(tmp, p)
 
-    def apply(self, image_id, ann_id, action, category_id=None):
-        """Apply one decision to one object and save. Returns the review."""
+    def _check_category(self, category_id):
+        if category_id not in self.pkg.category_ids:
+            raise ReviewError(f"unknown category: {category_id}")
+
+    def apply(self, image_id, ann_id=None, action=None, category_id=None, candidate_id=None):
+        """Apply one decision and save. Returns the review.
+
+        accept / change / delete work on a pipeline object (int id) or an added one ("new-N").
+        add takes candidate_id and category_id and creates "new-N".
+        """
         if action not in ACTIONS:
             raise ReviewError(f"unknown action: {action}")
-        ann = next((a for a in self.pkg.annotations.get(image_id, []) if a["id"] == ann_id), None)
-        if ann is None:
-            raise ReviewError(f"object {ann_id} is not in image {image_id}")
-        if action == "change" and category_id not in self.pkg.category_ids:
-            raise ReviewError(f"unknown category: {category_id}")
+        if action in ("change", "add"):
+            self._check_category(category_id)
 
         with self.lock:
             review = self.load(image_id) or {"image_id": image_id, "objects": [], "log": []}
             entries = {o["ann_id"]: o for o in review["objects"]}
-            prev = entries.get(ann_id)
-            orig = ann["category_id"]
 
-            if action == "delete":
-                entry = {"ann_id": ann_id, "state": "deleted"}
-                log = {"action": "delete"}
-            elif action == "accept":
-                # Accepting keeps a changed class; on a deleted object it restores it.
-                if prev and prev["state"] == "changed":
-                    entry = dict(prev)
+            if action == "add":
+                ann_id, entry, log = self._add(image_id, entries, candidate_id, category_id)
+                prev = None
+            else:
+                prev = entries.get(ann_id)
+                if is_added(prev):
+                    entry, log = self._decide_added(prev, action, category_id, entries)
                 else:
-                    entry = {"ann_id": ann_id, "category_id": orig, "state": "accepted"}
-                log = {"action": "accept"}
-            else:  # change
-                current = prev.get("category_id", orig) if prev and prev["state"] != "deleted" else orig
-                if category_id == orig:
-                    entry = {"ann_id": ann_id, "category_id": orig, "state": "accepted"}
-                else:
-                    entry = {"ann_id": ann_id, "category_id": category_id,
-                             "state": "changed", "orig_category_id": orig}
-                log = {"action": "change", "from": current, "to": category_id}
+                    entry, log = self._decide_pipeline(image_id, ann_id, prev, action, category_id)
 
             entries[ann_id] = entry
             # same field order as the README example, easier to read by hand
@@ -96,3 +95,54 @@ class ReviewStore:
             }
             self._write(image_id, review)
             return review
+
+    def _add(self, image_id, entries, candidate_id, category_id):
+        cand = next((c for c in self.pkg.candidates.get(image_id, []) if c["id"] == candidate_id), None)
+        if cand is None:
+            raise ReviewError(f"candidate {candidate_id} is not in image {image_id}")
+        if any(e.get("from_candidate") == candidate_id and e["state"] != "deleted" for e in entries.values()):
+            raise ReviewError(f"candidate {candidate_id} was already added")
+        # numbers are never reused, so log lines always point to one object
+        used = [int(k.split("-")[1]) for k in entries if isinstance(k, str) and k.startswith("new-")]
+        ann_id = f"new-{max(used, default=0) + 1}"
+        entry = {"ann_id": ann_id, "category_id": category_id, "state": "added",
+                 "from_candidate": candidate_id, "segmentation": cand["segmentation"]}
+        return ann_id, entry, {"action": "add", "candidate": candidate_id, "to": category_id}
+
+    @staticmethod
+    def _decide_added(prev, action, category_id, entries):
+        # an added object keeps its shape even when deleted, so it can be restored
+        if action == "delete":
+            return {**prev, "state": "deleted"}, {"action": "delete"}
+        if action == "accept":
+            # restoring must not create a second live object from the same candidate
+            twin = next((e for e in entries.values() if e is not prev and e.get("from_candidate") == prev["from_candidate"]
+                         and e["state"] != "deleted"), None)
+            if prev["state"] == "deleted" and twin:
+                # shown in the UI, so in Turkish
+                raise ReviewError(f"aday #{prev['from_candidate']} zaten {twin['ann_id']} olarak eklenmiş, "
+                                  f"geri almak için önce onu sil")
+            return {**prev, "state": "added"}, {"action": "accept"}
+        return ({**prev, "category_id": category_id},
+                {"action": "change", "from": prev["category_id"], "to": category_id})
+
+    def _decide_pipeline(self, image_id, ann_id, prev, action, category_id):
+        ann = next((a for a in self.pkg.annotations.get(image_id, []) if a["id"] == ann_id), None)
+        if ann is None:
+            raise ReviewError(f"object {ann_id} is not in image {image_id}")
+        orig = ann["category_id"]
+
+        if action == "delete":
+            return {"ann_id": ann_id, "state": "deleted"}, {"action": "delete"}
+        if action == "accept":
+            # Accepting keeps a changed class; on a deleted object it restores it.
+            if prev and prev["state"] == "changed":
+                return dict(prev), {"action": "accept"}
+            return {"ann_id": ann_id, "category_id": orig, "state": "accepted"}, {"action": "accept"}
+        # change
+        current = prev.get("category_id", orig) if prev and prev["state"] != "deleted" else orig
+        if category_id == orig:
+            entry = {"ann_id": ann_id, "category_id": orig, "state": "accepted"}
+        else:
+            entry = {"ann_id": ann_id, "category_id": category_id, "state": "changed", "orig_category_id": orig}
+        return entry, {"action": "change", "from": current, "to": category_id}

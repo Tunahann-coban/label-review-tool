@@ -7,6 +7,7 @@ import SelectedPanel from './SelectedPanel'
 import { DEFAULT_THRESHOLD, orderObjects, unknownCategoryIds } from './suspects'
 import Toolbar from './Toolbar'
 import { findNextPending } from './navigation'
+import { availableCandidates } from './candidates'
 
 // Keyboard shortcuts must not fire while typing in a form field.
 const isFormField = (el) => ['INPUT', 'SELECT', 'TEXTAREA'].includes(el?.tagName)
@@ -23,6 +24,13 @@ export default function App() {
   const [threshold, setThreshold] = useState(DEFAULT_THRESHOLD)
   const [exporting, setExporting] = useState(false)
   const [exportOutcome, setExportOutcome] = useState(null)  // { result } or { error }
+  const [showCandidates, setShowCandidates] = useState(false)
+  const [selectedCandidateId, setSelectedCandidateId] = useState(null)
+
+  // One selection at a time: an object or a candidate.
+  const selectObject = useCallback((id) => { setSelectedId(id); setSelectedCandidateId(null) }, [])
+  const selectCandidate = useCallback((id) => { setSelectedCandidateId(id); setSelectedId(null) }, [])
+  const clearSelection = useCallback(() => { setSelectedId(null); setSelectedCandidateId(null) }, [])
 
   // Retry until the service is up, so the page can be opened first
   useEffect(() => {
@@ -39,14 +47,14 @@ export default function App() {
 
   useEffect(() => {
     if (imageId == null) return
-    setSelectedId(null)
+    clearSelection()
     setSaveError(null)
     let stale = false  // ignore a slow answer for an image we already left
     fetchImage(imageId)
       .then((data) => { if (!stale) setDetail(data) })
       .catch((err) => setError(err.message))
     return () => { stale = true }
-  }, [imageId])
+  }, [imageId, clearSelection])
 
   // category_id -> name, always taken from the package
   const categoryNames = useMemo(
@@ -72,30 +80,51 @@ export default function App() {
   const selectedReasons = orderedItems.find((it) => it.obj.id === selectedId)?.reasons ?? []
   const nextPendingIndex = pkg ? findNextPending(pkg.images, index) : null
 
+  const candidates = useMemo(() => (current ? availableCandidates(current) : []), [current])
+  const selectedCandidate = candidates.find((c) => c.id === selectedCandidateId) ?? null
+
   // Every decision is saved right away; the service answers with the updated image.
-  const decide = useCallback(async (action, categoryId) => {
-    if (!selected || saving) return
-    // skip decisions that would change nothing, so the log stays meaningful
-    if (action === 'accept' && ['accepted', 'changed'].includes(selected.state)) return
-    if (action === 'delete' && selected.state === 'deleted') return
-    if (action === 'change' && categoryId === selected.category_id) return
+  const save = useCallback(async (decision) => {
     setSaving(true)
     setSaveError(null)
     try {
-      const updated = await postReview(current.image.id, {
-        ann_id: selected.id, action, category_id: categoryId ?? null,
-      })
+      const updated = await postReview(current.image.id, decision)
       setDetail(updated)
       setPkg((p) => ({
         ...p,
         images: p.images.map((img) => (img.id === updated.image.id ? { ...img, status: updated.status } : img)),
       }))
+      return updated
     } catch (err) {
       setSaveError(err.message)
+      return null
     } finally {
       setSaving(false)
     }
-  }, [current, selected, saving])
+  }, [current])
+
+  const decide = useCallback((action, categoryId) => {
+    if (!selected || saving) return
+    // skip decisions that would change nothing, so the log stays meaningful
+    if (action === 'accept' && ['accepted', 'changed', 'added'].includes(selected.state)) return
+    if (action === 'delete' && selected.state === 'deleted') return
+    if (action === 'change' && categoryId === selected.category_id) return
+    save({ ann_id: selected.id, action, category_id: categoryId ?? null })
+  }, [selected, saving, save])
+
+  // Adding a candidate selects the new object, so it can be checked right away.
+  const addCandidate = useCallback(async (categoryId) => {
+    if (!selectedCandidate || saving) return
+    const candidateId = selectedCandidate.id
+    const updated = await save({ action: 'add', candidate_id: candidateId, category_id: categoryId })
+    const added = updated?.objects.find((o) => o.from_candidate === candidateId && o.state === 'added')
+    if (added) selectObject(added.id)
+  }, [selectedCandidate, saving, save, selectObject])
+
+  const toggleCandidates = () => {
+    setShowCandidates((v) => !v)
+    setSelectedCandidateId(null)
+  }
 
   const runExport = async () => {
     setExporting(true)
@@ -111,7 +140,14 @@ export default function App() {
 
   useEffect(() => {
     const onKey = (e) => {
-      if (isFormField(e.target) || e.ctrlKey || e.altKey || e.metaKey) return
+      if (e.ctrlKey || e.altKey || e.metaKey) return
+      if (e.key === 'Escape') {
+        // also from a form field: Esc leaves the class list and drops the selection
+        e.target.blur?.()
+        clearSelection()
+        return
+      }
+      if (isFormField(e.target)) return
       if (e.key === 'Enter') decide('accept')
       else if (e.key === 'Delete') decide('delete')
       else if (e.key === 'n' || e.key === 'N') go(1)
@@ -120,7 +156,7 @@ export default function App() {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [decide, go])
+  }, [decide, go, clearSelection])
 
   if (error) return <main className="app"><p className="error">Hata: {error}</p></main>
   if (offline) {
@@ -146,13 +182,18 @@ export default function App() {
       {current ? (
         <div className="workspace">
           <ImageViewer detail={current} categoryNames={categoryNames}
-            selectedId={selectedId} onSelect={setSelectedId} />
+            selectedId={selectedId} onSelect={selectObject}
+            candidates={showCandidates ? candidates : null}
+            selectedCandidateId={selectedCandidateId} onSelectCandidate={selectCandidate} />
           <aside className="sidebar">
-            <SelectedPanel object={selected} reasons={selectedReasons} categories={pkg.categories}
-              categoryNames={categoryNames} onDecide={decide} saving={saving} />
+            <SelectedPanel object={selected} reasons={selectedReasons} candidate={selectedCandidate}
+              categories={pkg.categories} categoryNames={categoryNames}
+              onDecide={decide} onAddCandidate={addCandidate} onCancel={clearSelection} saving={saving} />
             <ObjectList items={orderedItems} categoryNames={categoryNames}
-              selectedId={selectedId} onSelect={setSelectedId}
-              threshold={threshold} onThreshold={setThreshold} />
+              selectedId={selectedId} onSelect={selectObject}
+              threshold={threshold} onThreshold={setThreshold}
+              candidateCount={candidates.length} showCandidates={showCandidates}
+              onToggleCandidates={toggleCandidates} />
           </aside>
         </div>
       ) : (

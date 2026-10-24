@@ -30,7 +30,8 @@ function toImagePoint(svg, clientX, clientY) {
  * Draws masks on top of the image. Uses image pixel coordinates via viewBox,
  * so the browser handles scaling to the on-screen size.
  */
-export default function MaskOverlay({ image, objects, categoryNames, selectedId, onSelect }) {
+export default function MaskOverlay({ image, objects, categoryNames, selectedId, onSelect,
+  candidates, selectedCandidateId, onSelectCandidate }) {
   const { width, height } = image
   const fontSize = Math.max(12, Math.round(width / 50))
 
@@ -46,9 +47,13 @@ export default function MaskOverlay({ image, objects, categoryNames, selectedId,
     ...items.filter((it) => it.obj.id === selectedId),
   ]
 
+  // With candidates shown, a click looks for a candidate first, so one lying
+  // under an existing mask can still be picked.
   const handleClick = (e) => {
     const p = toImagePoint(e.currentTarget, e.clientX, e.clientY)
-    onSelect(objectAt(p.x, p.y, visible)?.id ?? null)
+    const cand = candidates && objectAt(p.x, p.y, candidates)
+    if (cand) onSelectCandidate(cand.id)
+    else onSelect(objectAt(p.x, p.y, visible)?.id ?? null)
   }
 
   return (
@@ -72,6 +77,22 @@ export default function MaskOverlay({ image, objects, categoryNames, selectedId,
                 stroke={color} strokeWidth={3} vectorEffect="non-scaling-stroke" />
             ))}
             <text x={pos.x} y={pos.y} fontSize={fontSize} className="mask-label">{label}</text>
+          </g>
+        )
+      })}
+      {candidates?.map((cand) => {
+        const selected = cand.id === selectedCandidateId
+        return (
+          <g key={`cand-${cand.id}`} className={selected ? 'candidate selected' : 'candidate'}>
+            {cand.segmentation.map((poly, k) => (
+              <g key={k}>
+                {/* black under white dashes: visible on light and dark backgrounds */}
+                <polygon points={toPoints(poly)} fill={selected ? '#ffd400' : 'none'} fillOpacity={0.35}
+                  stroke="#000" strokeWidth={selected ? 4 : 3} vectorEffect="non-scaling-stroke" />
+                <polygon points={toPoints(poly)} fill="none" stroke={selected ? '#ffd400' : '#fff'}
+                  strokeWidth={selected ? 2.5 : 1.5} strokeDasharray="6 4" vectorEffect="non-scaling-stroke" />
+              </g>
+            ))}
           </g>
         )
       })}

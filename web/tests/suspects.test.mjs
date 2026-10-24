@@ -20,6 +20,9 @@ check('box changed to unknown is not suspect by class',
 check('threshold 0 -> nothing suspect by score', suspectReasons(o(1, 0.0, 1), 0, unk).length === 0)
 check('threshold 1 -> everything below 1 suspect', suspectReasons(o(1, 0.99, 1), 1, unk).length === 1)
 
+check('added object is never suspect, even as unknown',
+  suspectReasons(o('new-1', null, 8, { state: 'added', from_candidate: 1001 }), 0.5, unk).length === 0)
+
 const objs = [o(10, 0.9, 1), o(11, 0.3, 2), o(12, 0.8, 8), o(13, 0.1, 1), o(14, 0.7, 2), o(15, null, 1)]
 const ord = orderObjects(objs, 0.5, unk)
 check('suspects first, lowest score first', ord.map((i) => i.obj.id).join() === '13,11,12,10,14,15')

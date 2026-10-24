@@ -92,6 +92,55 @@ def run(root):
     check("no temp file left", not any(p.suffix == ".tmp" for p in store.dir.iterdir()))
     check("other images still pending", store.status(2) == "pending")
 
+    # --- adding from candidates (step 8) ---
+    cand = pkg.candidates[1][0]
+    cat = sorted(pkg.category_ids)[0]
+    before = len(store.load(1)["log"])
+    store.apply(1, action="add", candidate_id=cand["id"], category_id=cat)
+    entry = next(o for o in store.load(1)["objects"] if o["ann_id"] == "new-1")
+    check("add -> README format", entry == {"ann_id": "new-1", "category_id": cat, "state": "added",
+                                            "from_candidate": cand["id"], "segmentation": cand["segmentation"]})
+    merged = {o["id"]: o for o in merge_objects(pkg.annotations[1], store.load(1))}
+    check("added object appears after pipeline objects", list(merged)[-1] == "new-1")
+    check("added object has bbox, no score", merged["new-1"]["score"] is None and len(merged["new-1"]["bbox"]) == 4)
+    try:
+        store.apply(1, action="add", candidate_id=cand["id"], category_id=cat)
+        check("same candidate cannot be added twice", False)
+    except ReviewError:
+        check("same candidate cannot be added twice", True)
+    for label, kwargs in [("candidate of another image", dict(candidate_id=pkg.candidates[2][0]["id"], category_id=cat)),
+                          ("add with unknown category", dict(candidate_id=pkg.candidates[1][1]["id"], category_id=999)),
+                          ("add without category", dict(candidate_id=pkg.candidates[1][1]["id"]))]:
+        try:
+            store.apply(1, action="add", **kwargs)
+            check(f"rejects {label}", False)
+        except ReviewError:
+            check(f"rejects {label}", True)
+
+    other_cat = sorted(pkg.category_ids)[1]
+    store.apply(1, "new-1", "change", other_cat)
+    e = next(o for o in store.load(1)["objects"] if o["ann_id"] == "new-1")
+    check("added object class change stays 'added'", e["state"] == "added" and e["category_id"] == other_cat)
+    store.apply(1, "new-1", "delete")
+    e = next(o for o in store.load(1)["objects"] if o["ann_id"] == "new-1")
+    check("deleted added object keeps its shape", e["state"] == "deleted" and e["segmentation"] == cand["segmentation"])
+    store.apply(1, "new-1", "accept")
+    e = next(o for o in store.load(1)["objects"] if o["ann_id"] == "new-1")
+    check("restore brings added object back", e["state"] == "added" and e["category_id"] == other_cat)
+    store.apply(1, "new-1", "delete")
+    store.apply(1, action="add", candidate_id=cand["id"], category_id=cat)
+    ids = [o["ann_id"] for o in store.load(1)["objects"] if str(o["ann_id"]).startswith("new-")]
+    check("re-adding a deleted candidate gets a new number, old one not reused", ids == ["new-1", "new-2"])
+    log = store.load(1)["log"]
+    check("add is logged with candidate and class", log[before]["action"] == "add" and log[before]["candidate"] == cand["id"])
+    try:
+        store.apply(1, "new-1", "accept")  # new-2 already uses the same candidate
+        check("restoring cannot duplicate a re-added candidate", False)
+    except ReviewError:
+        live = [o["id"] for o in merge_objects(pkg.annotations[1], store.load(1))
+                if o.get("from_candidate") == cand["id"] and o["state"] != "deleted"]
+        check("restoring cannot duplicate a re-added candidate", live == ["new-2"])
+
     shutil.rmtree(store.dir)  # user resets reviews while the service runs
     check("reviews folder deleted -> image pending again", store.status(1) == "pending")
     store.apply(1, a, "accept")

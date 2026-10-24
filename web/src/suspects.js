@@ -11,8 +11,10 @@ export const unknownCategoryIds = (categories) =>
 const pipelineCategory = (obj) => (obj.state === 'changed' ? obj.orig_category_id : obj.category_id)
 
 // Reasons the object is suspect; empty list means it is not.
+// Objects the reviewer added are never suspect: they are not pipeline output.
 export function suspectReasons(obj, threshold, unknownIds) {
   const reasons = []
+  if (obj.from_candidate != null) return reasons
   if (obj.score != null && obj.score < threshold) reasons.push('skor eşiğin altında')
   if (unknownIds.has(pipelineCategory(obj))) reasons.push('sınıf: unknown')
   return reasons

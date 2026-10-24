@@ -4,7 +4,8 @@ import { STATE_ICONS, STATE_LABELS } from './states'
 
 // Right-hand list of the image's objects, suspects on top.
 // items: [{ obj, colorIndex, reasons }] already ordered (see suspects.js).
-export default function ObjectList({ items, categoryNames, selectedId, onSelect, threshold, onThreshold }) {
+export default function ObjectList({ items, categoryNames, selectedId, onSelect, threshold, onThreshold,
+  candidateCount, showCandidates, onToggleCandidates }) {
   const selectedRef = useRef(null)
 
   // When the selection comes from the image, bring the row into view.
@@ -29,6 +30,10 @@ export default function ObjectList({ items, categoryNames, selectedId, onSelect,
             onPointerUp={(e) => e.currentTarget.blur()} />
           <output>{threshold.toFixed(2)}</output>
         </label>
+        <button className={showCandidates ? 'candidate-toggle on' : 'candidate-toggle'}
+          onClick={onToggleCandidates} aria-pressed={showCandidates}>
+          {showCandidates ? 'Adayları gizle' : 'Adayları göster'} ({candidateCount})
+        </button>
       </div>
       <ul>
         {items.map(({ obj, colorIndex, reasons }) => {

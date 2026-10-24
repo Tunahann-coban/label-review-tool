@@ -33,8 +33,15 @@ class Package:
         return self.root / "images" / self.images[image_id]["file_name"]
 
 
+def bbox_of(segmentation):
+    xs = [v for poly in segmentation for v in poly[0::2]]
+    ys = [v for poly in segmentation for v in poly[1::2]]
+    return [min(xs), min(ys), max(xs) - min(xs), max(ys) - min(ys)]
+
+
 def merge_objects(annotations, review):
-    """Pipeline annotations with the review decisions applied on top."""
+    """Pipeline annotations with the review decisions applied on top,
+    followed by the objects the reviewer added from candidates."""
     entries = {o["ann_id"]: o for o in (review or {}).get("objects", [])}
     merged = []
     for ann in annotations:
@@ -47,4 +54,10 @@ def merge_objects(annotations, review):
             if entry["state"] == "changed":
                 obj["orig_category_id"] = entry["orig_category_id"]
         merged.append(obj)
+    for entry in entries.values():
+        if "from_candidate" in entry:  # added (state "added", or "deleted" after removal)
+            merged.append({"id": entry["ann_id"], "category_id": entry["category_id"],
+                           "segmentation": entry["segmentation"], "bbox": bbox_of(entry["segmentation"]),
+                           "score": None, "source": "review", "state": entry["state"],
+                           "from_candidate": entry["from_candidate"]})
     return merged

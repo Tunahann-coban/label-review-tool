@@ -20,9 +20,10 @@ export_dir = "export"
 
 
 class Decision(BaseModel):
-    ann_id: int
-    action: str  # accept | change | delete
-    category_id: int | None = None
+    action: str  # accept | change | delete | add
+    ann_id: int | str | None = None  # pipeline id (int) or added object ("new-1"); not for add
+    category_id: int | None = None   # change, add
+    candidate_id: int | None = None  # add
 
 
 def get_image_or_404(image_id):
@@ -61,7 +62,7 @@ def image_file(image_id: int):
 def save_review(image_id: int, decision: Decision):
     get_image_or_404(image_id)
     try:
-        store.apply(image_id, decision.ann_id, decision.action, decision.category_id)
+        store.apply(image_id, decision.ann_id, decision.action, decision.category_id, decision.candidate_id)
     except ReviewError as e:
         raise HTTPException(400, str(e))
     return image_detail(image_id)

@@ -78,6 +78,11 @@ def run(tmp):
     for a in pkg.annotations[2]:  # img_002: every object deleted
         store.apply(2, a["id"], "delete")
     # img_003 stays pending
+    added_cand, removed_cand = pkg.candidates[1][0], pkg.candidates[1][1]
+    added_cat = cats[2]["id"]
+    store.apply(1, action="add", candidate_id=added_cand["id"], category_id=added_cat)    # new-1, kept
+    store.apply(1, action="add", candidate_id=removed_cand["id"], category_id=added_cat)  # new-2
+    store.apply(1, "new-2", "delete")                                                       # removed again
 
     s = exporter.export(pkg, store, out)
 
@@ -99,8 +104,10 @@ def run(tmp):
     rows = read_labels(out / "labels" / "img_001.txt")
     w, h = pkg.images[1]["width"], pkg.images[1]["height"]
     kept = [a for a in anns1 if a["id"] != deleted["id"]]
-    expected_lines = sum(1 for a in kept for p in a["segmentation"] if len(p) >= 6 and len(p) % 2 == 0)
-    check("deleted object left out, extra part written, invalid part skipped", len(rows) == expected_lines)
+    expected_lines = sum(1 for a in kept for p in a["segmentation"] if len(p) >= 6 and len(p) % 2 == 0) + 1
+    check("deleted object left out, extra part written, invalid part skipped, added one in", len(rows) == expected_lines)
+    check("added object written last with its class index", rows[-1][0] == index_of[added_cat])
+    check("added-then-deleted object left out", len(rows) == expected_lines)
     check("changed object uses new class index", rows[0][0] == index_of[new_cat])
     check("untouched object uses its class index (not id - 1)",
           rows[1][0] == index_of[kept[1]["category_id"]] and index_of[kept[1]["category_id"]] != kept[1]["category_id"] - 1)
@@ -110,6 +117,8 @@ def run(tmp):
 
     # round trip: back to pixels must match the source (after clamping to the image)
     src_polys = [p for a in kept for p in a["segmentation"] if len(p) >= 6 and len(p) % 2 == 0]
+    src_polys += added_cand["segmentation"]
+    check("one source polygon per line", len(src_polys) == len(rows))
     worst = 0.0
     for (_, vals, _), poly in zip(rows, src_polys):
         for i in range(0, len(poly), 2):
@@ -122,7 +131,7 @@ def run(tmp):
     check("all objects deleted -> empty label file", (out / "labels" / "img_002.txt").read_text() == "")
 
     # --- summary ---
-    check("summary counts", s["images"] == 2 and s["empty_images"] == 1 and s["objects"] == len(kept))
+    check("summary counts", s["images"] == 2 and s["empty_images"] == 1 and s["objects"] == len(kept) + 1)
     check("per class counts add up", sum(c["count"] for c in s["per_class"]) == s["objects"])
     w_text = " | ".join(s["warnings"])
     check("warns about size mismatch", "img_002.jpg: annotations.json boyutu 640x600, dosya 800x600" in w_text)

@@ -17,7 +17,8 @@ export const imageFileUrl = (id) => `/api/images/${id}/file`
 // Writes reviewed images to export/ as a YOLO-seg dataset; returns a summary.
 export const postExport = () => request('/api/export', { method: 'POST' })
 
-// decision: { ann_id, action: 'accept' | 'change' | 'delete', category_id? }
+// decision: { action: 'accept' | 'change' | 'delete', ann_id, category_id? }
+//        or { action: 'add', candidate_id, category_id }
 // Returns the updated image detail.
 export const postReview = (id, decision) =>
   request(`/api/images/${id}/review`, {
