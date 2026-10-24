@@ -3,6 +3,7 @@ import { fetchImage, fetchPackage, postReview } from './api'
 import ImageViewer from './ImageViewer'
 import ObjectList from './ObjectList'
 import SelectedPanel from './SelectedPanel'
+import { DEFAULT_THRESHOLD, orderObjects, unknownCategoryIds } from './suspects'
 
 // Keyboard shortcuts must not fire while typing in a form field.
 const isFormField = (el) => ['INPUT', 'SELECT', 'TEXTAREA'].includes(el?.tagName)
@@ -16,6 +17,7 @@ export default function App() {
   const [selectedId, setSelectedId] = useState(null)
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState(null)
+  const [threshold, setThreshold] = useState(DEFAULT_THRESHOLD)
 
   // Retry until the service is up, so the page can be opened first
   useEffect(() => {
@@ -53,8 +55,16 @@ export default function App() {
     [total],
   )
 
+  const unknownIds = useMemo(() => unknownCategoryIds(pkg?.categories ?? []), [pkg])
+
   const current = detail?.image.id === imageId ? detail : null
   const selected = current?.objects.find((o) => o.id === selectedId) ?? null
+
+  const orderedItems = useMemo(
+    () => (current ? orderObjects(current.objects, threshold, unknownIds) : []),
+    [current, threshold, unknownIds],
+  )
+  const selectedReasons = orderedItems.find((it) => it.obj.id === selectedId)?.reasons ?? []
 
   // Every decision is saved right away; the service answers with the updated image.
   const decide = useCallback(async (action, categoryId) => {
@@ -120,10 +130,11 @@ export default function App() {
           <ImageViewer detail={current} categoryNames={categoryNames}
             selectedId={selectedId} onSelect={setSelectedId} />
           <aside className="sidebar">
-            <SelectedPanel object={selected} categories={pkg.categories}
+            <SelectedPanel object={selected} reasons={selectedReasons} categories={pkg.categories}
               categoryNames={categoryNames} onDecide={decide} saving={saving} />
-            <ObjectList objects={current.objects} categoryNames={categoryNames}
-              selectedId={selectedId} onSelect={setSelectedId} />
+            <ObjectList items={orderedItems} categoryNames={categoryNames}
+              selectedId={selectedId} onSelect={setSelectedId}
+              threshold={threshold} onThreshold={setThreshold} />
           </aside>
         </div>
       ) : (

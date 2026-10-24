@@ -72,9 +72,19 @@ kbd {
   gap: 8px;
 }
 
-.selected-panel.empty {
-  color: #666;
-  font-size: 14px;
+.selected-panel.empty .selected-title {
+  color: #888;
+}
+
+/* fixed one-line rows: long text is cut with "…" instead of growing the panel */
+.info-line {
+  height: 20px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .selected-title {
@@ -82,6 +92,12 @@ kbd {
   justify-content: space-between;
   align-items: baseline;
   gap: 8px;
+  white-space: nowrap;
+}
+
+.selected-title b {
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .actions {
@@ -167,11 +183,51 @@ kbd {
   border-radius: 6px;
 }
 
+/* stays visible while the list scrolls */
+.list-header {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: #fff;
+  padding: 10px 12px;
+  border-bottom: 1px solid #eee;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
 .object-list h2 {
   font-size: 14px;
   margin: 0;
-  padding: 10px 12px;
-  border-bottom: 1px solid #eee;
+}
+
+.threshold {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.threshold input {
+  flex: 1;
+  min-width: 0;
+}
+
+.threshold output {
+  font-variant-numeric: tabular-nums;
+  width: 32px;
+  text-align: right;
+}
+
+.badge {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: #fff1d6;
+  color: #8a5300;
+  border: 1px solid #f0c674;
+  white-space: nowrap;
 }
 
 .object-list ul {
