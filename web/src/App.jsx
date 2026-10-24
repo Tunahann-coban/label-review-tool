@@ -1,12 +1,12 @@
-import { useEffect, useState } from 'react'
-import { fetchImage, fetchPackage, imageFileUrl } from './api'
+import { useEffect, useMemo, useState } from 'react'
+import { fetchImage, fetchPackage } from './api'
+import ImageViewer from './ImageViewer'
 
 export default function App() {
   const [pkg, setPkg] = useState(null)
   const [index, setIndex] = useState(0)
   const [detail, setDetail] = useState(null)
   const [error, setError] = useState(null)
-
   const [offline, setOffline] = useState(false)
 
   // Retry until the service is up, so the page can be opened first
@@ -24,8 +24,18 @@ export default function App() {
 
   useEffect(() => {
     if (imageId == null) return
-    fetchImage(imageId).then(setDetail).catch((err) => setError(err.message))
+    let stale = false  // ignore a slow answer for an image we already left
+    fetchImage(imageId)
+      .then((data) => { if (!stale) setDetail(data) })
+      .catch((err) => setError(err.message))
+    return () => { stale = true }
   }, [imageId])
+
+  // category_id -> name, always taken from the package
+  const categoryNames = useMemo(
+    () => Object.fromEntries((pkg?.categories ?? []).map((c) => [c.id, c.name])),
+    [pkg],
+  )
 
   if (error) return <main className="app"><p className="error">Hata: {error}</p></main>
   if (offline) {
@@ -41,6 +51,7 @@ export default function App() {
 
   const total = pkg.images.length
   const go = (delta) => setIndex((i) => Math.min(total - 1, Math.max(0, i + delta)))
+  const current = detail?.image.id === imageId ? detail : null
 
   return (
     <main className="app">
@@ -49,10 +60,14 @@ export default function App() {
         <span>{index + 1} / {total} · {pkg.images[index].file_name}</span>
         <button onClick={() => go(1)} disabled={index === total - 1}>Sonraki →</button>
       </header>
-      <section className="viewer">
-        {imageId != null && <img src={imageFileUrl(imageId)} alt={pkg.images[index].file_name} />}
-      </section>
-      {detail && <p>{detail.objects.length} nesne, {detail.candidates.length} aday</p>}
+      {current ? (
+        <>
+          <ImageViewer detail={current} categoryNames={categoryNames} />
+          <p>{current.objects.length} nesne, {current.candidates.length} aday</p>
+        </>
+      ) : (
+        <p>Yükleniyor...</p>
+      )}
     </main>
   )
 }
