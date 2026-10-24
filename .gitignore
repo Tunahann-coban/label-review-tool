@@ -17,3 +17,6 @@ export/
 .idea/
 .DS_Store
 Thumbs.db
+
+# Pipeline notebooks (teammates' code): not shared until the team agrees
+pipeline/*.ipynb
