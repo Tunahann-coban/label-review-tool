@@ -109,25 +109,65 @@ def nms(boxes, scores, iou_threshold=0.8):
     return sorted(keep)
 
 
-def filter_candidates(candidate_masks, object_masks, image_area,
-                      max_overlap=0.5, min_area=400, max_area_frac=0.5, max_count=40):
-    """SAM 2 automatic masks worth offering as candidates: not already covered by a
-    detected object, not specks, not "the whole floor". Biggest first, at most max_count.
-    Returns [(mask, area)]."""
+def polygons_to_mask(polygons, width, height):
+    """Flat pixel polygons -> boolean mask (for comparing shapes already in a package)."""
+    m = np.zeros((height, width), np.uint8)
+    for p in polygons:
+        cv2.fillPoly(m, [np.round(np.asarray(p, np.float32).reshape(-1, 2)).astype(np.int32)], 1)
+    return m.astype(bool)
+
+
+def mask_iou(a, b):
+    inter = np.logical_and(a, b).sum()
+    return float(inter / np.logical_or(a, b).sum()) if inter else 0.0
+
+
+def dedupe_objects(masks, scores, iou_threshold=0.7):
+    """Indexes to keep. When two objects' masks cover nearly the same pixels, it is one
+    object found twice (same or different class): the higher score stays.
+    Objects lying inside others with low overlap (clothes on a sofa) are kept: they can
+    be real, separate objects, and the reviewer decides.
+    Pilot data: true duplicates had mask IoU 0.75-0.95, nested objects 0.11-0.56."""
+    order = sorted(range(len(scores)), key=lambda i: -scores[i])
+    keep = []
+    for i in order:
+        if all(mask_iou(masks[i], masks[k]) <= iou_threshold for k in keep):
+            keep.append(i)
+    return sorted(keep)
+
+
+def candidate_indexes(candidate_masks, object_masks, image_area, max_overlap=0.5,
+                      min_area_frac=0.005, max_area_frac=0.3, iou_threshold=0.7, max_count=20):
+    """Positions (in candidate_masks) of the SAM 2 automatic masks worth offering as
+    candidates, biggest first. Dropped: covered by a detected object, specks (< 0.5 % of
+    the image), wall/floor-sized pieces (> 30 %), near copies of a bigger candidate;
+    at most max_count. Pilot data: 40 candidates per photo, half specks, several in pairs."""
     covered = None
     for m in object_masks:
         covered = m.astype(bool) if covered is None else covered | m.astype(bool)
-    kept = []
-    for m in candidate_masks:
-        m = m.astype(bool)
+    masks = [m.astype(bool) for m in candidate_masks]
+    sized = []
+    for i, m in enumerate(masks):
         area = int(m.sum())
-        if area < min_area or area > max_area_frac * image_area:
+        if area < min_area_frac * image_area or area > max_area_frac * image_area:
             continue
         if covered is not None and (m & covered).sum() / area > max_overlap:
             continue
-        kept.append((m, area))
-    kept.sort(key=lambda c: -c[1])
-    return kept[:max_count]
+        sized.append((i, area))
+    sized.sort(key=lambda c: -c[1])
+    kept = []
+    for i, _ in sized:
+        if len(kept) == max_count:
+            break
+        if all(mask_iou(masks[i], masks[k]) <= iou_threshold for k in kept):
+            kept.append(i)
+    return kept
+
+
+def filter_candidates(candidate_masks, object_masks, image_area, **rules):
+    """Same as candidate_indexes, returning [(mask, area)] biggest first."""
+    return [(candidate_masks[i].astype(bool), int(candidate_masks[i].astype(bool).sum()))
+            for i in candidate_indexes(candidate_masks, object_masks, image_area, **rules)]
 
 
 # ---------- package ----------

@@ -20,3 +20,7 @@ Thumbs.db
 
 # Pipeline notebooks (teammates' code): not shared until the team agrees
 pipeline/*.ipynb
+
+# Real packages from the pipeline (photos stay on this machine)
+packages/
+*.zip

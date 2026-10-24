@@ -85,8 +85,75 @@ def test_candidates():
         m = blank()
         m[10 + i * 25:30 + i * 25, 10:40 + i * 3] = 1
         many.append(m)
-    kept = mp.filter_candidates(many, [], image_area=300 * 400, min_area=100, max_count=3)
+    kept = mp.filter_candidates(many, [], image_area=300 * 400, min_area_frac=0.001, max_count=3)
     check("at most max_count, biggest first", len(kept) == 3 and kept[0][1] >= kept[1][1] >= kept[2][1])
+
+    a = blank()
+    a[100:200, 100:250] = 1
+    near_copy = a.copy()
+    near_copy[100:105, 100:250] = 0       # same piece, 5 rows shorter
+    kept = mp.filter_candidates([a, near_copy, free], [], image_area=300 * 400)
+    check("near copy of a candidate dropped, the bigger one kept",
+          len(kept) == 2 and kept[0][1] == int(a.sum()))
+    wall = blank()
+    wall[0:300, 0:150] = 1                 # 37.5 % of the image
+    check("wall-sized candidate (> 30 %) dropped", mp.filter_candidates([wall], [], 300 * 400) == [])
+
+
+def test_dedupe_objects():
+    big = blank()
+    big[50:250, 50:350] = 1
+    same = blank()
+    same[55:250, 50:345] = 1               # the same object, slightly different mask
+    inside = blank()
+    inside[100:150, 100:160] = 1           # small thing lying on the big one
+    keep = mp.dedupe_objects([big, same, inside], [0.40, 0.46, 0.30])
+    check("same object twice -> higher score kept", keep == [1, 2])
+    check("nested object with low overlap kept", 2 in keep)
+    check("no objects -> nothing", mp.dedupe_objects([], []) == [])
+    m = mp.polygons_to_mask([[10, 10, 110, 10, 110, 60, 10, 60]], 200, 100)
+    check(f"polygons_to_mask fills the polygon ({int(m.sum())} px)", 5000 <= m.sum() <= 5200)
+
+
+def test_clean_package(tmp):
+    """Builds a package with a duplicate and junk candidates, cleans it, loads it in our service."""
+    from package import Package
+    import clean_package
+
+    src = tmp / "photos_clean"
+    src.mkdir()
+    Image.fromarray(np.full((300, 400, 3), 100, np.uint8)).save(src / "unit.jpg")
+    b = mp.PackageBuilder(tmp / "raw")
+    image_id, _ = b.add_image(src / "unit.jpg")
+    obj = blank()
+    obj[50:250, 50:200] = 1
+    twin = blank()
+    twin[52:250, 50:198] = 1
+    b.add_annotation(image_id, "mattress", mp.mask_to_polygons(obj), 0.46)
+    b.add_annotation(image_id, "clothing textile", mp.mask_to_polygons(twin), 0.43)
+    free = blank()
+    free[60:160, 260:380] = 1
+    speck = blank()
+    speck[0:15, 0:15] = 1  # 225 px: passes the builder's 100 px floor, under 0.5 % of the image
+    for m in (free, free.copy(), speck):
+        b.add_candidate(image_id, mp.mask_to_polygons(m), int(m.sum()))
+    b.write(zip_it=False)
+
+    r = clean_package.clean(tmp / "raw", tmp / "clean")
+    check("clean: duplicate object removed, higher score kept", r["objects"] == (2, 1))
+    check("clean: speck and copy candidates removed", r["candidates"] == (3, 1))
+    data = json.loads((tmp / "clean" / "annotations.json").read_text(encoding="utf-8"))
+    check("clean: kept object is the 0.46 mattress", data["annotations"][0]["score"] == 0.46)
+    reasons = [x["reason"] for x in data["info"]["cleaning"]["removed"] if x["kind"] == "object"]
+    check(f"clean: reason recorded ({reasons})", reasons and reasons[0].startswith("duplicate of #1 mattress"))
+    check("clean: raw package untouched",
+          len(json.loads((tmp / "raw" / "annotations.json").read_text(encoding="utf-8"))["annotations"]) == 2)
+    check("clean: our service loads it", len(Package(tmp / "clean").annotations[1]) == 1)
+    try:
+        clean_package.clean(tmp / "raw", tmp / "raw")
+        check("clean: refuses to overwrite its source", False)
+    except ValueError:
+        check("clean: refuses to overwrite its source", True)
 
 
 def test_exif(tmp):
@@ -167,8 +234,10 @@ def main():
         test_polygons()
         test_nms()
         test_candidates()
+        test_dedupe_objects()
         test_exif(tmp)
         test_package_end_to_end(tmp)
+        test_clean_package(tmp)
     finally:
         shutil.rmtree(tmp)
     print(f"\n{'all passed' if failures == 0 else f'{failures} failed'}")

@@ -85,13 +85,18 @@ cd web && npm test
 .venv\Scripts\python pipeline\build_notebook.py pipeline\<arkadaşın-notebook'u>.ipynb
 ```
 
-Notebook dosyaları (`*.ipynb`) ekip onay verene kadar git'e girmez.
+- `clean_package.py`: notebook'a sonradan eklenen temizlik kurallarını eski bir pakete uygular, Kaggle'ı yeniden çalıştırmak gerekmez.
+
+Notebook dosyaları (`*.ipynb`) ve gerçek paketler (`packages/`, `*.zip`) git'e girmez.
+
+**Pilot 1 (24 Ekim, 4 fotoğraf, T4):** Fotoğraf başına ~11 saniye, 40 nesne, 140 aday. Maskeler iyi. Sorunlar: aynı nesneye 2–3 etiket (maske örtüşmesi %75–95) ve gürültülü adaylar (yarısı kırıntı). Çözüm: maske bazlı kopya temizliği (örtüşme > %70 ise yüksek skor kalır) ve aday kuralları (%0,5–30 arası boyut, kopyalar atılır, en fazla 20). Temiz paket: 37 nesne, 48 aday. Skorların hepsi 0,36–0,85 arasında. Eşik 0,50'de çoğu "şüpheli".
+RAM++ ile Grounding DINO farklı sınıflar buluyor. depo1'de RAM++ "cardboard box, bagged contents, mattress" buldu, DINO bulmadı. DINO "plastic tote, table" buldu, RAM++ bulmadı. RAM++ ile ön filtreleme bu ikisini hiç aratmazdı. Ekiple konuşulacak.
 
 Notebook incelemesinden çıkan notlar (ekiple paylaşılmalı):
 - `predict_with_classes()` sınıfları ayrı işlemiyor. O da tek metin kullanıp sonucu kelime içermeye göre eşliyor. Çözüm her sınıfı ayrı sormak, Bölüm 3 böyle yapıyor.
 - Koddaki liste 17 sınıf, belgede "18 + misc_item" yazıyor. Pilot 17 + `misc_item` kullanıyor.
 - RAM++ çıktısı Grounding DINO'ya bağlı değildi. Pilotta RAM++ atlanıyor.
-- Grounding DINO eklentisi `CUDA_HOME=""` ile derleniyor, GPU desteksiz kalabilir. Bölüm 3 bunu deneyip gerekirse işlemciye geçiyor.
+- ~~Grounding DINO eklentisi `CUDA_HOME=""` ile GPU desteksiz kalabilir~~. Pilotta "Compiling with CUDA" yazdı ve GPU'da çalıştı, endişe yersizdi. Bölüm 3'teki güvenlik ağı yine duruyor.
 - Telefon fotoğraflarının EXIF yönü: Grounding DINO'nun yükleyicisi uygulamıyor, tarayıcı uyguluyor. Paket düzeltilmiş resmi kullanıyor.
 
 ## Git düzeni

@@ -21,7 +21,8 @@ PART3_MD = """## Bölüm 3: Paket üret (etiket inceleme aracı için)
 
 - **Her sınıf ayrı sorulur.** Bütün sınıfları tek metinde vermek etiketleri karıştırıyor
   ("large appliance small appliance"). `predict_with_classes()` bunu çözmüyor, çünkü o da tek metin kullanıyor.
-- Aynı nesne iki sınıfla bulunursa yüksek skorlu olan kalır.
+- Aynı nesne iki kez bulunursa (kutular ya da maskeler neredeyse aynıysa) yüksek skorlu olan kalır.
+- Adaylardan kırıntılar (resmin %0,5'inden küçük), duvar büyüklüğündekiler (%30'dan büyük) ve birbirinin kopyaları atılır. Fotoğraf başına en fazla 20 aday kalır.
 - Maskeler sadeleştirilmiş çokgenlere çevrilir.
 - SAM 2'nin otomatik maskelerinden, bulunan nesnelerle çakışmayanlar **aday** olur.
 - Fotoğraflar telefonun döndürme notuna (EXIF) göre düzeltilir. Modeller ve araç aynı resmi görür.
@@ -36,6 +37,7 @@ MAX_IMAGES = 5          # pilot: ilk 5 fotoğraf. Hepsi için: None
 BOX_THRESHOLD = 0.35    # Grounding DINO kutu eşiği
 TEXT_THRESHOLD = 0.25
 NMS_IOU = 0.8           # aynı nesneye iki sınıf: kutular bu kadar örtüşürse yüksek skor kalır
+OBJECT_IOU = 0.7        # maskeleri bu kadar örtüşen iki nesne aynı nesnedir: yüksek skor kalır
 OUT_DIR = "/kaggle/working/bidvision_package"
 SAM2_CONFIG = "configs/sam2.1/sam2.1_hiera_l.yaml"
 SAM2_CHECKPOINT = "./checkpoints/sam2.1_hiera_large.pt"
@@ -116,7 +118,7 @@ for n, path in enumerate(paths, 1):
             names += [cls] * len(xyxy)
         keep = mp.nms(boxes, scores, NMS_IOU)
 
-        object_masks = []
+        object_masks, found = [], set()
         if keep:
             predictor.set_image(rgb)
             masks, _, _ = predictor.predict(box=np.array([boxes[i] for i in keep]), multimask_output=False)
@@ -125,22 +127,25 @@ for n, path in enumerate(paths, 1):
                 masks = masks[:, 0]
             elif masks.ndim == 2:
                 masks = masks[None]
-            for i, m in zip(keep, masks):
-                m = m > 0.5
-                if builder.add_annotation(image_id, names[i], mp.mask_to_polygons(m), scores[i]):
-                    object_masks.append(m)
+            masks = [m > 0.5 for m in masks]
+            # aynı nesne iki kez bulunduysa (maskeler neredeyse aynı) yüksek skorlu kalır
+            for j in mp.dedupe_objects(masks, [scores[i] for i in keep], OBJECT_IOU):
+                i = keep[j]
+                if builder.add_annotation(image_id, names[i], mp.mask_to_polygons(masks[j]), scores[i]):
+                    object_masks.append(masks[j])
+                    found.add(names[i])
 
         auto = generator.generate(rgb)
     n_cand = 0
     for m, area in mp.filter_candidates([a["segmentation"] for a in auto], object_masks, h * w):
         n_cand += builder.add_candidate(image_id, mp.mask_to_polygons(m), area) is not None
 
-    found = sorted({{names[i] for i in keep}})
     print(f"[{{n}}/{{len(paths)}}] {{path.name}}  {{w}}x{{h}}  nesne: {{len(object_masks)}}  aday: {{n_cand}}"
-          f"  ({{time.time() - t0:.0f}} sn)  {{', '.join(found)}}")
+          f"  ({{time.time() - t0:.0f}} sn)  {{', '.join(sorted(found))}}")
 
 zip_path = builder.write(settings={{
     "box_threshold": BOX_THRESHOLD, "text_threshold": TEXT_THRESHOLD, "nms_iou": NMS_IOU,
+    "object_mask_iou": OBJECT_IOU, "candidates": "min 0.5 % / max 30 % of image, near copies dropped, max 20",
     "sam2": SAM2_CHECKPOINT, "grounding_dino": GDINO_CHECKPOINT, "gdino_device": gdino_device,
     "prompting": "one class per query",
 }})
