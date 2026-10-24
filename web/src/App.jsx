@@ -9,6 +9,7 @@ import { DEFAULT_THRESHOLD, catchAllCategories, orderObjects } from './suspects'
 import Toolbar from './Toolbar'
 import { findNextPending } from './navigation'
 import { availableCandidates } from './candidates'
+import { nextMaskView } from './maskView'
 
 // Keyboard shortcuts must not fire while typing in a form field.
 const isFormField = (el) => ['INPUT', 'SELECT', 'TEXTAREA'].includes(el?.tagName)
@@ -29,6 +30,7 @@ export default function App() {
   const [toast, setToast] = useState(null)  // { kind, text }
   const closeToast = useCallback(() => setToast(null), [])
   const [showCandidates, setShowCandidates] = useState(false)
+  const [maskView, setMaskView] = useState('fill')  // fill | outline | hidden (see MaskOverlay)
   const [selectedCandidateId, setSelectedCandidateId] = useState(null)
 
   // One selection at a time: an object or a candidate.
@@ -176,6 +178,7 @@ export default function App() {
       if (e.key === 'Enter') decide('accept')
       else if (e.key === 'Delete') decide('delete')
       else if (e.key === 'n' || e.key === 'N') go(1)
+      else if (e.key === 'm' || e.key === 'M') setMaskView(nextMaskView)
       else return
       e.preventDefault()
     }
@@ -199,7 +202,8 @@ export default function App() {
     <main className="app">
       <Toolbar images={pkg.images} index={index} onGo={go}
         nextPendingIndex={nextPendingIndex} onNextPending={() => setIndex(nextPendingIndex)}
-        saving={saving} saveError={saveError} onExport={openExport} exporting={exporting} />
+        saving={saving} saveError={saveError} onExport={openExport} exporting={exporting}
+        maskView={maskView} onMaskView={setMaskView} />
       {exportDialog && (
         <ExportDialog summary={exportDialog.summary} done={exportDialog.done} loading={exportDialog.loading}
           error={exportDialog.error} exporting={exporting} onExport={runExport} onClose={closeExport} />
@@ -209,7 +213,7 @@ export default function App() {
         <div className="workspace">
           <ImageViewer detail={current} categoryNames={categoryNames}
             selectedId={selectedId} onSelect={selectObject}
-            candidates={showCandidates ? candidates : null}
+            candidates={showCandidates ? candidates : null} view={maskView}
             selectedCandidateId={selectedCandidateId} onSelectCandidate={selectCandidate} />
           <aside className="sidebar">
             <SelectedPanel object={selected} reasons={selectedReasons} candidate={selectedCandidate}

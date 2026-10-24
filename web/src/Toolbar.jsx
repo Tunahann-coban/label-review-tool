@@ -1,7 +1,9 @@
-// Top bar: navigation, image status, progress and save feedback.
+import { MASK_VIEWS } from './maskView'
+
+// Top bar: navigation, mask view, image status, progress and save feedback.
 // Buttons come first so they never move when the file name length changes.
 export default function Toolbar({ images, index, onGo, onNextPending, nextPendingIndex, saving, saveError,
-  onExport, exporting }) {
+  onExport, exporting, maskView, onMaskView }) {
   const total = images.length
   const reviewed = images.filter((img) => img.status === 'reviewed').length
   const current = images[index]
@@ -12,6 +14,13 @@ export default function Toolbar({ images, index, onGo, onNextPending, nextPendin
       <button onClick={() => onGo(-1)} disabled={index === 0}>← Önceki</button>
       <button onClick={() => onGo(1)} disabled={index === total - 1}>Sonraki → <kbd>N</kbd></button>
       <button onClick={onNextPending} disabled={nextPendingIndex == null}>Sıradaki bekleyen</button>
+      <div className="segmented" role="group" aria-label="Maske görünümü">
+        <span className="muted">Maske <kbd>M</kbd></span>
+        {MASK_VIEWS.map((v) => (
+          <button key={v.id} aria-pressed={maskView === v.id} className={maskView === v.id ? 'on' : ''}
+            onClick={() => onMaskView(v.id)}>{v.label}</button>
+        ))}
+      </div>
       <span className={`status status-${current.status}`}>
         {current.status === 'reviewed' ? 'incelendi' : 'bekliyor'}
       </span>

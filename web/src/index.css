@@ -20,6 +20,39 @@ body {
   margin-bottom: 12px;
 }
 
+.segmented {
+  display: flex;
+  align-items: center;
+  gap: 0;
+}
+
+.segmented > .muted {
+  margin-right: 6px;
+}
+
+.segmented button {
+  padding: 2px 8px;
+  border: 1px solid #bbb;
+  background: #fff;
+  cursor: pointer;
+  margin-left: -1px;
+}
+
+.segmented button:first-of-type {
+  border-radius: 4px 0 0 4px;
+}
+
+.segmented button:last-of-type {
+  border-radius: 0 4px 4px 0;
+}
+
+.segmented button.on {
+  background: #2f6fec;
+  border-color: #2f6fec;
+  color: #fff;
+  position: relative;
+}
+
 /* fixed width: "bekliyor" and "incelendi" take the same space */
 .status {
   font-size: 12px;
