@@ -1,5 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { fetchExportPreview, fetchImage, fetchPackage, postExport, postReview } from './api'
+import {
+  fetchCOCOExportPreview, fetchExportPreview, fetchImage, fetchPackage,
+  postCOCOExport, postExport, postReview,
+} from './api'
 import ExportDialog from './ExportDialog'
 import Toast from './Toast'
 import ImageViewer from './ImageViewer'
@@ -14,7 +17,7 @@ import { nextMaskView } from './maskView'
 // Keyboard shortcuts must not fire while typing in a form field.
 const isFormField = (el) => ['INPUT', 'SELECT', 'TEXTAREA'].includes(el?.tagName)
 
-export default function App() {
+export default function App({ onGoHome }) {
   const [pkg, setPkg] = useState(null)
   const [index, setIndex] = useState(0)
   const [detail, setDetail] = useState(null)
@@ -24,16 +27,13 @@ export default function App() {
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState(null)
   const [threshold, setThreshold] = useState(DEFAULT_THRESHOLD)
-  const [exporting, setExporting] = useState(false)
-  // export window: null when closed, else { summary, done, loading, error }
-  const [exportDialog, setExportDialog] = useState(null)
-  const [toast, setToast] = useState(null)  // { kind, text }
+  const [exportDialog, setExportDialog] = useState(false)
+  const [toast, setToast] = useState(null)
   const closeToast = useCallback(() => setToast(null), [])
   const [showCandidates, setShowCandidates] = useState(false)
-  const [maskView, setMaskView] = useState('fill')  // fill | outline | hidden (see MaskOverlay)
+  const [maskView, setMaskView] = useState('fill')
   const [selectedCandidateId, setSelectedCandidateId] = useState(null)
 
-  // One selection at a time: an object or a candidate.
   const selectObject = useCallback((id) => { setSelectedId(id); setSelectedCandidateId(null) }, [])
   const selectCandidate = useCallback((id) => { setSelectedCandidateId(id); setSelectedId(null) }, [])
   const clearSelection = useCallback(() => { setSelectedId(null); setSelectedCandidateId(null) }, [])
@@ -55,14 +55,13 @@ export default function App() {
     if (imageId == null) return
     clearSelection()
     setSaveError(null)
-    let stale = false  // ignore a slow answer for an image we already left
+    let stale = false
     fetchImage(imageId)
       .then((data) => { if (!stale) setDetail(data) })
       .catch((err) => setError(err.message))
     return () => { stale = true }
   }, [imageId, clearSelection])
 
-  // category_id -> name, always taken from the package
   const categoryNames = useMemo(
     () => Object.fromEntries((pkg?.categories ?? []).map((c) => [c.id, c.name])),
     [pkg],
@@ -89,7 +88,6 @@ export default function App() {
   const candidates = useMemo(() => (current ? availableCandidates(current) : []), [current])
   const selectedCandidate = candidates.find((c) => c.id === selectedCandidateId) ?? null
 
-  // Every decision is saved right away; the service answers with the updated image.
   const save = useCallback(async (decision) => {
     setSaving(true)
     setSaveError(null)
@@ -98,7 +96,8 @@ export default function App() {
       setDetail(updated)
       setPkg((p) => ({
         ...p,
-        images: p.images.map((img) => (img.id === updated.image.id ? { ...img, status: updated.status } : img)),
+        images: p.images.map((img) =>
+          img.id === updated.image.id ? { ...img, status: updated.status } : img),
       }))
       return updated
     } catch (err) {
@@ -111,14 +110,12 @@ export default function App() {
 
   const decide = useCallback((action, categoryId) => {
     if (!selected || saving) return
-    // skip decisions that would change nothing, so the log stays meaningful
     if (action === 'accept' && ['accepted', 'changed', 'added'].includes(selected.state)) return
     if (action === 'delete' && selected.state === 'deleted') return
     if (action === 'change' && categoryId === selected.category_id) return
     save({ ann_id: selected.id, action, category_id: categoryId ?? null })
   }, [selected, saving, save])
 
-  // Adding a candidate selects the new object, so it can be checked right away.
   const addCandidate = useCallback(async (categoryId) => {
     if (!selectedCandidate || saving) return
     const candidateId = selectedCandidate.id
@@ -132,44 +129,33 @@ export default function App() {
     setSelectedCandidateId(null)
   }
 
-  // The toolbar button only opens the window with a preview; the export itself
-  // runs from the button inside the window.
-  const openExport = async () => {
-    setExportDialog({ loading: true })
-    try {
-      setExportDialog({ summary: await fetchExportPreview() })
-    } catch (err) {
-      setExportDialog({ error: err.message })
-    }
-  }
+  // Export: dialog manages its own state; App just opens it and handles the toast
+  const openExport = useCallback(() => setExportDialog(true), [])
+  const closeExport = useCallback(() => setExportDialog(false), [])
 
-  const closeExport = useCallback(() => { if (!exporting) setExportDialog(null) }, [exporting])
+  const fetchPreviewForFormat = useCallback((format) => {
+    return format === 'yolo' ? fetchExportPreview() : fetchCOCOExportPreview()
+  }, [])
 
-  const runExport = async () => {
-    setExporting(true)
-    try {
-      const result = await postExport()
-      setExportDialog({ summary: result, done: true })
-      setToast({ kind: 'success', text: `✓ Dışa aktarıldı: ${result.images} resim, ${result.objects} nesne → ${result.path}` })
-    } catch (err) {
-      setExportDialog((d) => ({ ...d, error: err.message }))
-      setToast({ kind: 'error', text: `Dışa aktarılamadı: ${err.message}` })
-    } finally {
-      setExporting(false)
-    }
-  }
+  const runExportForFormat = useCallback((format) => {
+    return format === 'yolo' ? postExport() : postCOCOExport()
+  }, [])
+
+  const handleExportDone = useCallback((result, format) => {
+    const count = format === 'yolo'
+      ? `${result.images} resim, ${result.objects} nesne`
+      : `${result.images} resim, ${result.annotations} nesne`
+    setToast({ kind: 'success', text: `✓ Dışa aktarıldı: ${count} → ${result.path}` })
+  }, [])
 
   useEffect(() => {
     const onKey = (e) => {
       if (e.ctrlKey || e.altKey || e.metaKey) return
-      // while the export window is open, only Esc works (closes it); Enter/Del must not
-      // touch the object behind the window
       if (exportDialog) {
         if (e.key === 'Escape') closeExport()
         return
       }
       if (e.key === 'Escape') {
-        // also from a form field: Esc leaves the class list and drops the selection
         e.target.blur?.()
         clearSelection()
         return
@@ -202,11 +188,14 @@ export default function App() {
     <main className="app">
       <Toolbar images={pkg.images} index={index} onGo={go}
         nextPendingIndex={nextPendingIndex} onNextPending={() => setIndex(nextPendingIndex)}
-        saving={saving} saveError={saveError} onExport={openExport} exporting={exporting}
-        maskView={maskView} onMaskView={setMaskView} />
+        saving={saving} saveError={saveError} onExport={openExport}
+        maskView={maskView} onMaskView={setMaskView} onGoHome={onGoHome} />
       {exportDialog && (
-        <ExportDialog summary={exportDialog.summary} done={exportDialog.done} loading={exportDialog.loading}
-          error={exportDialog.error} exporting={exporting} onExport={runExport} onClose={closeExport} />
+        <ExportDialog
+          onFetchPreview={fetchPreviewForFormat}
+          onRunExport={runExportForFormat}
+          onDone={handleExportDone}
+          onClose={closeExport} />
       )}
       <Toast toast={toast} onClose={closeToast} />
       {current ? (

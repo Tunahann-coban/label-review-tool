@@ -24,3 +24,7 @@ pipeline/*.ipynb
 # Real packages from the pipeline (photos stay on this machine)
 packages/
 *.zip
+
+# Runtime registry and uploaded projects (machine-specific)
+projects.json
+projects/

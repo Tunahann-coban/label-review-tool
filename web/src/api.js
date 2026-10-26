@@ -7,6 +7,7 @@ async function request(path, options) {
     // The service explains its own errors in `detail`; anything else means it is not reachable.
     throw new Error(body?.detail ?? `servis yanıt vermiyor (${res.status}), servis açık mı?`)
   }
+  if (res.status === 204) return null
   return res.json()
 }
 
@@ -29,3 +30,27 @@ export const postReview = (id, decision) =>
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(decision),
   })
+
+// COCO export
+export const fetchCOCOExportPreview = () => request('/api/export/coco/preview')
+export const postCOCOExport = () => request('/api/export/coco', { method: 'POST' })
+
+// Project management
+export const fetchProjects = () => request('/api/projects')
+
+export const postProject = (data) =>
+  request('/api/projects', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  })
+
+export const activateProject = (id) =>
+  request(`/api/projects/${id}/activate`, { method: 'POST' })
+
+export const deleteProject = (id) =>
+  request(`/api/projects/${id}`, { method: 'DELETE' })
+
+// Image upload: body is a FormData — do NOT set Content-Type, browser handles boundary
+export const postUploadProject = (formData) =>
+  request('/api/projects/upload', { method: 'POST', body: formData })

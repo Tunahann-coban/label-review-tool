@@ -560,3 +560,227 @@ button.icon {
   background: #b00020;
   color: #fff;
 }
+
+/* ── home page ─────────────────────────────────────────────────────────── */
+
+.home {
+  min-height: 100vh;
+  background: #f4f4f2;
+  display: flex;
+  flex-direction: column;
+}
+
+.home-topbar {
+  background: #1a1a1a;
+  color: #fff;
+  padding: 12px 24px;
+  flex-shrink: 0;
+}
+
+.home-brand {
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.home-content {
+  max-width: 860px;
+  width: 100%;
+  margin: 0 auto;
+  padding: 32px 16px 64px;
+}
+
+.home-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.home-heading {
+  flex: 1;
+  margin: 0;
+  font-size: 20px;
+  font-weight: 600;
+}
+
+.home-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.home-empty {
+  padding: 40px 0;
+  text-align: center;
+}
+
+.home-offline {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 80px 24px;
+  text-align: center;
+}
+
+/* project list */
+
+.project-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.project-card {
+  background: #fff;
+  border: 1px solid #ddd;
+  border-radius: 8px;
+  padding: 14px 16px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.project-card.active-project { border-color: #2f6fec; }
+.project-card.invalid-project { border-color: #d44; opacity: 0.8; }
+
+.project-card-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.project-card-name {
+  font-weight: 600;
+  font-size: 15px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.project-card-path {
+  color: #666;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-top: 2px;
+}
+
+.project-card-meta {
+  font-size: 13px;
+  color: #555;
+  margin-top: 4px;
+}
+
+.project-card-error {
+  font-size: 12px;
+  color: #b00020;
+  margin-top: 4px;
+}
+
+.project-card-progress {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+  min-width: 160px;
+}
+
+.project-card-stat {
+  font-size: 12px;
+  color: #666;
+}
+
+.project-card-actions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+/* badges */
+
+.badge {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 6px;
+  border-radius: 10px;
+  background: #2f6fec;
+  color: #fff;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.badge-warn {
+  background: #d44;
+}
+
+/* add-project inline form */
+
+.add-project-form {
+  background: #f8f8f6;
+  border: 1px dashed #ccc;
+  border-radius: 8px;
+  padding: 16px;
+  margin-bottom: 16px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: flex-end;
+}
+
+.add-project-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+  min-width: 200px;
+  flex: 1;
+}
+
+.add-project-form input[type="text"] {
+  padding: 5px 8px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  font-size: 14px;
+}
+
+.form-actions {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+}
+
+.form-error {
+  font-size: 13px;
+  align-self: center;
+}
+
+/* create project dialog form fields */
+
+.form-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 12px;
+}
+
+.form-field label {
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.form-field input[type="text"] {
+  padding: 6px 8px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  font-size: 14px;
+}
+
+.form-hint {
+  font-size: 12px;
+}
