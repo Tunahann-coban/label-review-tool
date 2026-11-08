@@ -17,12 +17,17 @@ import cv2
 import numpy as np
 from PIL import Image, ImageOps
 
-# BidVision classes, as in the pilot notebook. Order = YOLO class index, keep it stable.
+# BidVision taxonomy (decided 2026-11-08): the pilot notebook's 17 classes + "tv"
+# (named in the project documents, "most specific level": tv rather than electronics)
+# + the catch-all below = "18 classes + misc_item".
+# Order = YOLO class index. Never reorder or insert in the middle once labelling has
+# started: every exported label file would point at the wrong class. Append only.
 CLASSES = [
     "cardboard box", "plastic tote", "bagged contents", "luggage",
     "large appliance", "small appliance", "electronics", "sofa",
     "chair", "table", "cabinet", "mattress", "tool chest",
     "bicycle", "fitness equipment", "clothing textile", "wall art",
+    "tv",
 ]
 # Catch-all class for the reviewer ("nothing more specific fits"). Not sent to the
 # detector as a prompt: "misc item" is not something a model can look for.

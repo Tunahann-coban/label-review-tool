@@ -211,7 +211,10 @@ def test_package_end_to_end(tmp):
     check(f"unique stems ({names})", len({Path(n).stem for n in names}) == 3)
 
     data = json.loads((tmp / "pkg" / "annotations.json").read_text(encoding="utf-8"))
-    check("18 categories, misc_item last", len(data["categories"]) == 18 and data["categories"][-1]["name"] == "misc_item")
+    names = [c["name"] for c in data["categories"]]
+    check("19 categories: 17 pilot classes, tv, misc_item last",
+          len(names) == 19 and names[17] == "tv" and names[-1] == "misc_item")
+    check("category ids are 1..19 in list order", [c["id"] for c in data["categories"]] == list(range(1, 20)))
     check("candidate ids do not collide with object ids",
           not {a["id"] for a in data["annotations"]} & {c["id"] for c in data["candidates"]})
 
@@ -224,8 +227,8 @@ def test_package_end_to_end(tmp):
     s = exporter.export(pkg, store, tmp / "export")
     check("export has no warnings (sizes match, polygons valid)", s["warnings"] == [])
     lines = (tmp / "export" / "labels" / f"{Path(pkg.images[1]['file_name']).stem}.txt").read_text().splitlines()
-    check("box -> class 0, added candidate as misc_item -> class 17",
-          sorted(int(l.split()[0]) for l in lines) == [0, 17])
+    check("box -> class 0, added candidate as misc_item -> class 18",
+          sorted(int(l.split()[0]) for l in lines) == [0, 18])
 
 
 def main():
