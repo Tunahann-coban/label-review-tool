@@ -30,6 +30,13 @@ def clean(src, dest, object_iou=0.7):
         keep = set(mp.dedupe_objects(masks, [a["score"] for a in anns], object_iou))
         for i, a in enumerate(anns):
             if i in keep:
+                parts = mp.drop_small_parts(a["segmentation"])
+                if len(parts) != len(a["segmentation"]):
+                    removed.append({"image": img["file_name"], "id": a["id"], "kind": "fragments",
+                                    "class": names[a["category_id"]], "score": a["score"],
+                                    "reason": f"{len(a['segmentation']) - len(parts)} tiny parts dropped "
+                                              f"({len(a['segmentation'])} -> {len(parts)})"})
+                    a = dict(a, segmentation=parts, bbox=mp.bbox_of(parts))
                 kept_anns.append(a)
                 continue
             twin = anns[max(keep, key=lambda k: mp.mask_iou(masks[i], masks[k]))]
@@ -66,5 +73,5 @@ if __name__ == "__main__":
     print(f"objects:    {r['objects'][0]} -> {r['objects'][1]}")
     print(f"candidates: {r['candidates'][0]} -> {r['candidates'][1]}")
     for x in r["removed"]:
-        if x["kind"] == "object":
+        if x["kind"] in ("object", "fragments"):
             print(f"  removed {x['image']} #{x['id']} {x['class']} {x['score']}: {x['reason']}")

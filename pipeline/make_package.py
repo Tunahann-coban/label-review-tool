@@ -59,13 +59,15 @@ def find_images(folder):
 
 # ---------- geometry ----------
 
-def mask_to_polygons(mask, min_part_area=100.0, tolerance=0.002):
+def mask_to_polygons(mask, min_part_area=100.0, tolerance=0.002, min_part_frac=0.05):
     """Binary mask -> list of flat pixel polygons [x1, y1, x2, y2, ...], biggest first.
 
     tolerance: allowed edge deviation as a fraction of the part's outline length.
     SAM masks have thousands of edge pixels; a few dozen points keep the tool fast
     and lose almost nothing (tested: area changes well under 1 %).
-    Parts smaller than min_part_area pixels (specks) are dropped.
+    Parts smaller than min_part_area pixels (specks) are dropped, and so are parts
+    smaller than min_part_frac of the biggest part: a box on a messy pile can give a
+    mask in 40 scattered pieces, and the pieces are noise next to the main body.
     """
     m = np.ascontiguousarray(mask.astype(np.uint8))
     contours, _ = cv2.findContours(m, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
@@ -79,12 +81,36 @@ def mask_to_polygons(mask, min_part_area=100.0, tolerance=0.002):
             continue
         parts.append((area, [round(float(v), 1) for v in approx.flatten()]))
     parts.sort(key=lambda p: -p[0])
+    if parts:
+        parts = [p for p in parts if p[0] >= min_part_frac * parts[0][0]]
     return [poly for _, poly in parts]
 
 
 def polygon_area(flat):
     xs, ys = np.asarray(flat[0::2]), np.asarray(flat[1::2])
     return float(abs(np.dot(xs, np.roll(ys, -1)) - np.dot(ys, np.roll(xs, -1))) / 2)
+
+
+def drop_small_parts(polygons, min_part_frac=0.05):
+    """Same rule as mask_to_polygons, for polygons already in a package."""
+    if not polygons:
+        return polygons
+    areas = [polygon_area(p) for p in polygons]
+    biggest = max(areas)
+    return [p for p, a in zip(polygons, areas) if a >= min_part_frac * biggest]
+
+
+def pick_best_masks(masks, sam_scores):
+    """One mask per box from SAM 2's multimask output (3 guesses per box).
+
+    SAM 2 drops the box axis when there is a single box: masks (3, H, W) and
+    scores (3,) instead of (N, 3, H, W) and (N, 3). Returns a list of N boolean (H, W) masks,
+    each the guess SAM itself rates highest."""
+    masks, sam_scores = np.asarray(masks), np.asarray(sam_scores)
+    if masks.ndim == 3:
+        masks, sam_scores = masks[None], sam_scores[None]
+    best = sam_scores.reshape(len(masks), -1).argmax(axis=1)
+    return [masks[i, b] > 0.5 for i, b in enumerate(best)]
 
 
 def bbox_of(polygons):
@@ -112,6 +138,23 @@ def nms(boxes, scores, iou_threshold=0.8):
         if all(box_iou(boxes[i], boxes[k]) <= iou_threshold for k in keep):
             keep.append(i)
     return sorted(keep)
+
+
+def filter_boxes(boxes, scores, names, image_area, min_area_frac=0.01, max_area_frac=0.9,
+                 max_per_class=5):
+    """Indexes to keep, before SAM 2 runs. Asking Grounding DINO for one class at a time
+    on a cluttered photo can return dozens of small, near-identical "bagged contents"
+    boxes at the same score. Dropped: boxes under min_area_frac of the image (specks),
+    over max_area_frac (the whole photo), and everything past the best max_per_class
+    boxes of one class. Boxes are xyxy pixels."""
+    sized = [i for i, b in enumerate(boxes)
+             if min_area_frac * image_area <= (b[2] - b[0]) * (b[3] - b[1]) <= max_area_frac * image_area]
+    kept, count = [], {}
+    for i in sorted(sized, key=lambda i: -scores[i]):
+        if count.get(names[i], 0) < max_per_class:
+            count[names[i]] = count.get(names[i], 0) + 1
+            kept.append(i)
+    return sorted(kept)
 
 
 def polygons_to_mask(polygons, width, height):
