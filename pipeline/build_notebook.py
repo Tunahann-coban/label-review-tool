@@ -1,18 +1,23 @@
 """Adds our package step to the teammate's Kaggle notebook, without changing their cells.
 
     .venv\\Scripts\\python pipeline\\build_notebook.py <teammate>.ipynb
+        [--image-dir /kaggle/input/datasets/<user>/<dataset>] [--max-images 5] [--out name.ipynb]
 
-Writes pipeline/bidvision_pilot.ipynb: every teammate cell, unchanged and in order, plus
+The image dir is the dataset path Kaggle shows under Input (copy it from there).
+Without --max-images every photo is processed.
+
+Writes pipeline/bidvision_pilot.ipynb (or --out): every teammate cell, unchanged and in order, plus
 "Part 3" inserted right after their setup (after the last pip install cell). It has to sit
 before their one-image test cells: those use a placeholder path, the last ones raise an
 error, and "Run All" stops at the first error.
 """
+import argparse
 import json
 import sys
 from pathlib import Path
 
 HERE = Path(__file__).parent
-IMAGE_DIR = "/kaggle/input/datasets/tunahancoban55/bidvision-pilot"
+DEFAULT_IMAGE_DIR = "/kaggle/input/datasets/tunahancoban55/bidvision-pilot"
 
 # Part 3 goes right after this teammate cell (the last setup step).
 INSERT_AFTER = "!pip install supervision addict yapf -q"
@@ -28,12 +33,12 @@ PART3_MD = """## Bölüm 3: Paket üret (etiket inceleme aracı için)
 - Fotoğraflar telefonun döndürme notuna (EXIF) göre düzeltilir. Modeller ve araç aynı resmi görür.
 - Hesaplar `float32` ile yapılır. `bfloat16`'yı T4 ve P100 ekran kartları tam desteklemiyor.
 
-Ayarlar bir sonraki hücrenin başında. Pilot için `MAX_IMAGES = 5`.
+Ayarlar bir sonraki hücrenin başında (dataset yolu, fotoğraf sayısı, eşikler).
 """
 
 RUN = f'''# ---------------- Ayarlar ----------------
-IMAGE_DIR = "{IMAGE_DIR}"
-MAX_IMAGES = 5          # pilot: ilk 5 fotoğraf. Hepsi için: None
+IMAGE_DIR = "@@IMAGE_DIR@@"
+MAX_IMAGES = @@MAX_IMAGES@@          # None: hepsi. Bir sayı: yalnızca ilk o kadar fotoğraf (deneme için)
 BOX_THRESHOLD = 0.35    # Grounding DINO kutu eşiği
 TEXT_THRESHOLD = 0.25
 NMS_IOU = 0.8           # aynı nesneye iki sınıf: kutular bu kadar örtüşürse yüksek skor kalır
@@ -185,7 +190,18 @@ def cell(kind, text):
 
 
 def main():
-    src = Path(sys.argv[1])
+    parser = argparse.ArgumentParser(description="Build the Kaggle notebook with the package step")
+    parser.add_argument("teammate_notebook")
+    parser.add_argument("--image-dir", default=DEFAULT_IMAGE_DIR, help="Kaggle dataset path (from the Input panel)")
+    parser.add_argument("--max-images", type=int, default=None, help="only the first N photos (default: all)")
+    parser.add_argument("--out", default="bidvision_pilot.ipynb", help="file name, written into pipeline/")
+    args = parser.parse_args()
+    if not args.image_dir.startswith("/kaggle/input/") or '"' in args.image_dir:
+        sys.exit(f"--image-dir should be a Kaggle input path like /kaggle/input/datasets/<user>/<dataset>, "
+                 f"got {args.image_dir!r}")
+    run_cell = RUN.replace("@@IMAGE_DIR@@", args.image_dir).replace("@@MAX_IMAGES@@", str(args.max_images))
+
+    src = Path(args.teammate_notebook)
     nb = json.loads(src.read_text(encoding="utf-8"))
     originals = nb["cells"]
     texts = ["".join(c["source"]) for c in originals]
@@ -196,7 +212,7 @@ def main():
     package_code = (HERE / "make_package.py").read_text(encoding="utf-8")
     ours = [cell("markdown", PART3_MD),
             cell("code", "%%writefile /kaggle/working/make_package.py\n" + package_code),
-            cell("code", RUN),
+            cell("code", run_cell),
             cell("code", SHOW)]
     for c in ours:
         c["metadata"]["label_review_tool"] = True  # marks the cells we added
@@ -207,9 +223,10 @@ def main():
     assert ["".join(c["source"]) for c in kept] == texts, "a teammate cell changed"
 
     out = dict(nb, cells=cells)
-    dest = HERE / "bidvision_pilot.ipynb"
+    dest = HERE / Path(args.out).name
     dest.write_text(json.dumps(out, ensure_ascii=False, indent=1), encoding="utf-8")
     print(f"written: {dest}: {len(originals)} teammate cells unchanged + {len(ours)} added after cell [{at[0]}]")
+    print(f"  photos from {args.image_dir}, {'all' if args.max_images is None else f'first {args.max_images}'}")
 
 
 if __name__ == "__main__":
