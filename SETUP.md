@@ -63,9 +63,15 @@ cd web
 npm run dev
 ```
 
-Tarayıcıda **http://localhost:5173** adresini aç.
+Tarayıcıda **http://localhost:5173** adresini aç. Açılan **Projeler** sayfasında `sample_package` görünür, **Aç** de.
 
 İki terminali de açık bırak. Kapatmak için ikisinde de `Ctrl + C`.
+
+Projeler listesi bilgisayarında `projects.json` dosyasında tutulur. Servisi bir kere `--package` ile başlattıktan sonra
+`--package` vermeden de başlatabilirsin: `.venv\Scripts\python server\server.py`. Ana sayfadan istediğin projeyi seçersin.
+
+Dışa aktarılan veri seti paketin yanındaki **`<paket>_export`** klasörüne (COCO için `<paket>_export_coco`) yazılır.
+Her projenin kendi klasörü vardır. Başka bir yer istersen servise `--export <klasör>` ver.
 
 ## 4. Önce örnek veriyle dene (5 dk)
 
@@ -81,7 +87,8 @@ Tarayıcıda **http://localhost:5173** adresini aç.
 | Kaçırılan nesneyi ekle | **Adayları göster** → kesikli çizgili parçaya tıkla → sınıf seç |
 | Sonraki resim | `N` |
 | Seçimi bırak | `Esc` |
-| YOLO'ya aktar | Üstteki **Dışa aktar** → penceredeki **Dışa aktar** |
+| YOLO ya da COCO'ya aktar | Üstteki **Dışa aktar** → biçimi seç → penceredeki **Dışa aktar** |
+| Başka projeye geç | Sol üstteki **← Projeler** |
 
 Kararlar her işlemde `sample_package/reviews/` klasörüne kaydedilir. Sayfayı yenilesen de durur. Baştan başlamak için o klasörü sil.
 
@@ -91,11 +98,15 @@ Gerçek paket (`bidvision_package.zip`) GitHub'da **yok**, çünkü müzayede fo
 
 1. `label-review-tool` içinde `packages` adlı bir klasör oluştur.
 2. Zip'i `packages\bidvision_pilot` klasörüne aç. İçinde `annotations.json` ve `images\` olmalı.
-3. Terminal 1'de servisi durdur (`Ctrl + C`) ve bu paketle başlat:
+3. Projeler sayfasında **+ Klasör ekle** de. Klasör yolunu (örn. `C:\...\label-review-tool\packages\bidvision_pilot`), bir ad ve kendi adını yaz, **Ekle**.
+   Komut satırını tercih edersen servisi bununla da başlatabilirsin:
    ```powershell
-   .venv\Scripts\python server\server.py --package packages\bidvision_pilot --reviewer adin --export packages\bidvision_pilot_export
+   .venv\Scripts\python server\server.py --package packages\bidvision_pilot --reviewer adin
    ```
-4. Tarayıcıda sayfayı yenile.
+4. Projeyi **Aç**.
+
+**+ Görsel yükle** tarayıcıdan fotoğraf (ve isteğe bağlı `annotations.json`) yükleyerek proje oluşturur. Etiket dosyası
+yüklenmezse proje sınıfsız ve nesnesiz olur. Bu araç maske çizmediği için asıl yol Kaggle'dan gelen pakettir.
 
 İpucu: Gerçek fotoğrafta **Kenar** görünümü (`M`) nesnenin kendisini gösterir, sınıfı ona bakarak seç.
 
@@ -112,10 +123,14 @@ Gerçek paket (`bidvision_package.zip`) GitHub'da **yok**, çünkü müzayede fo
 | `npm install` sırasında `npm warn allow-scripts ... esbuild` | Zararsız, bir şey yapma. Arayüz yine çalışır. |
 | `pip` sırasında `A new release of pip is available` | Zararsız. |
 
+| Sayfada "istek aracın kendi sayfasından gelmedi" | Aracı `http://localhost:5173` adresinden aç; başka bir adres ya da uzantı istek gönderiyor olabilir. |
+
 Testleri çalıştırmak istersen (isteğe bağlı):
 ```powershell
+.venv\Scripts\python -m pip install -r server\requirements-dev.txt
 .venv\Scripts\python server\test_review_store.py
 .venv\Scripts\python server\test_exporter.py
+.venv\Scripts\python server\test_projects.py
 cd web; npm test
 ```
 

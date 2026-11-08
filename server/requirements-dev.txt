@@ -1,0 +1,3 @@
+# Only for running the tests (server/test_*.py). The tool itself needs requirements.txt.
+-r requirements.txt
+httpx==0.28.1

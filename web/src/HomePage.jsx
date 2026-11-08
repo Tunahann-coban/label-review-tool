@@ -191,7 +191,7 @@ function AddProjectForm({ onAdd, onCancel }) {
     setError(null)
     try {
       const project = await postProject({ name, path, reviewer })
-      try { localStorage.setItem('last_reviewer', reviewer) } catch {}
+      try { localStorage.setItem('last_reviewer', reviewer) } catch { /* storage blocked: just not remembered */ }
       onAdd(project)
     } catch (err) {
       setError(err.message)

@@ -7,15 +7,19 @@ from datetime import datetime
 from pathlib import Path
 
 
-def _slugify(name: str) -> str:
-    s = name.lower().strip()
+# Turkish letters -> ASCII first, so "Örnek Çalışma" becomes "ornek-calisma", not "rnek-al-ma"
+_TR = str.maketrans("çÇğĞıİöÖşŞüÜ", "cCgGiIoOsSuU")
+
+
+def slugify(name: str) -> str:
+    s = name.translate(_TR).lower().strip()
     s = re.sub(r"[^a-z0-9]+", "-", s)
     return s.strip("-")[:48] or "project"
 
 
 def _make_id(name: str, existing: list) -> str:
     existing_ids = {p["id"] for p in existing}
-    base = _slugify(name)
+    base = slugify(name)
     candidate = base
     n = 2
     while candidate in existing_ids:
@@ -69,6 +73,14 @@ class ProjectRegistry:
             self._data["projects"].append(project)
             self._save()
             return project
+
+    def update_project(self, project_id: str, **changes) -> dict:
+        """Change reviewer / export_dir of a registered project; returns the project."""
+        with self._lock:
+            project = self.get_project(project_id)
+            project.update({k: v for k, v in changes.items() if k in ("reviewer", "export_dir", "name")})
+            self._save()
+            return dict(project)
 
     def set_active(self, project_id: str):
         with self._lock:

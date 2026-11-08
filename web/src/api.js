@@ -1,7 +1,11 @@
 // All calls to the service go through this file.
 
-async function request(path, options) {
-  const res = await fetch(path, options)
+// Every request carries this header; the service refuses writes without it, so other
+// web sites open in the same browser cannot change your reviews or upload files.
+const TOOL_HEADER = { 'X-Label-Tool': '1' }
+
+async function request(path, options = {}) {
+  const res = await fetch(path, { ...options, headers: { ...TOOL_HEADER, ...options.headers } })
   if (!res.ok) {
     const body = await res.json().catch(() => null)
     // The service explains its own errors in `detail`; anything else means it is not reachable.

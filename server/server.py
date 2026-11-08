@@ -7,25 +7,51 @@ Usage (registry mode, home page picks the project):
     python server/server.py
 """
 import argparse
+import io
 import json
-import re
 import shutil
 from pathlib import Path
 from typing import List
+from urllib.parse import urlsplit
 
 import uvicorn
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
-from fastapi.responses import FileResponse, Response
-from PIL import Image as PillowImage
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi.responses import FileResponse, JSONResponse, Response
+from PIL import Image as PillowImage, ImageOps
 from pydantic import BaseModel
 
 import coco_exporter
 import exporter
 from package import Package, merge_objects
-from project_registry import ProjectRegistry
+from project_registry import ProjectRegistry, slugify
 from review_store import ReviewError, ReviewStore
 
 app = FastAPI(title="Label Review Tool")
+
+# ── request safety ────────────────────────────────────────────────────────
+# The service only listens on 127.0.0.1, but any web page open in the same browser
+# can still send it requests. Form uploads are "simple" requests that browsers send
+# cross-site without asking. So: writes must carry our own header (other sites can't
+# add it), must not come from another site's Origin, and the Host must be local
+# (stops DNS rebinding from reading data through a look-alike host name).
+LOCAL_HOSTS = {"127.0.0.1", "localhost", "::1"}
+TOOL_HEADER = "x-label-tool"
+SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
+
+
+def _hostname(value):
+    return urlsplit(value if "//" in value else f"//{value}").hostname
+
+
+@app.middleware("http")
+async def local_requests_only(request: Request, call_next):
+    if _hostname(request.headers.get("host", "")) not in LOCAL_HOSTS:
+        return JSONResponse({"detail": "yalnızca bu bilgisayardan erişilebilir"}, status_code=403)
+    if request.method not in SAFE_METHODS:
+        origin = request.headers.get("origin")
+        if request.headers.get(TOOL_HEADER) != "1" or (origin and _hostname(origin) not in LOCAL_HOSTS):
+            return JSONResponse({"detail": "istek aracın kendi sayfasından gelmedi"}, status_code=403)
+    return await call_next(request)
 
 
 class ActiveProject:
@@ -93,10 +119,40 @@ def _project_with_progress(project: dict) -> dict:
         }
 
 
-def _slugify(name: str) -> str:
-    s = name.lower().strip()
-    s = re.sub(r"[^a-z0-9]+", "-", s)
-    return s.strip("-")[:48] or "project"
+_slugify = slugify  # one rule for project ids and upload folders
+
+IMAGE_TYPES = {".jpg", ".jpeg", ".png"}
+
+
+def safe_image_name(raw):
+    """The uploaded file name, if it is a plain image file name; 400 otherwise.
+    No folders, drive letters or hidden files: the name decides where we write."""
+    name = raw or ""
+    if (not name or name != Path(name).name or any(ch in name for ch in "/\\:")
+            or name.startswith(".") or Path(name).suffix.lower() not in IMAGE_TYPES):
+        raise HTTPException(400, f"geçersiz resim dosyası adı: {raw!r} (yalnızca .jpg / .jpeg / .png)")
+    return name
+
+
+def default_export_dir(package_path):
+    """<package>_export next to the package: every project writes its own dataset."""
+    p = Path(package_path).resolve()
+    return str(p.parent / f"{p.name}_export")
+
+
+def coco_dir(export_dir):
+    """COCO goes beside the YOLO folder, not into it: a YOLO export replaces its whole folder."""
+    return str(Path(export_dir).resolve()) + "_coco"
+
+
+def register_cli_package(path, reviewer, export_dir):
+    """--package: register the folder, or update it; the command-line values win."""
+    resolved = str(Path(path).resolve())
+    export_dir = str(Path(export_dir).resolve()) if export_dir else default_export_dir(resolved)
+    existing = registry.get_by_path(resolved)
+    if existing:
+        return registry.update_project(existing["id"], reviewer=reviewer, export_dir=export_dir)
+    return registry.add_project(Path(resolved).name, resolved, reviewer, export_dir)
 
 
 # ── existing review endpoints ──────────────────────────────────────────────
@@ -161,14 +217,14 @@ def do_export():
 def coco_preview():
     a = get_active()
     with a.store.lock:
-        return coco_exporter.preview_coco(a.pkg, a.store, a.export_dir)
+        return coco_exporter.preview_coco(a.pkg, a.store, coco_dir(a.export_dir))
 
 
 @app.post("/api/export/coco")
 def do_coco_export():
     a = get_active()
     with a.store.lock:
-        return coco_exporter.export_coco(a.pkg, a.store, a.export_dir)
+        return coco_exporter.export_coco(a.pkg, a.store, coco_dir(a.export_dir))
 
 
 # ── project management ─────────────────────────────────────────────────────
@@ -182,7 +238,7 @@ class ProjectCreate(BaseModel):
     name: str
     path: str
     reviewer: str
-    export_dir: str = "export"
+    export_dir: str | None = None  # default: <package>_export
 
 
 @app.post("/api/projects")
@@ -194,7 +250,8 @@ def create_project(body: ProjectCreate):
         Package(resolved)  # validate
     except Exception as e:
         raise HTTPException(422, f"paket yüklenemedi: {e}")
-    project = registry.add_project(body.name, resolved, body.reviewer, body.export_dir)
+    export_dir = str(Path(body.export_dir).resolve()) if body.export_dir else default_export_dir(resolved)
+    project = registry.add_project(body.name, resolved, body.reviewer, export_dir)
     return _project_with_progress(project)
 
 
@@ -208,10 +265,45 @@ async def upload_project(
 ):
     if not images:
         raise HTTPException(400, "en az bir resim gerekli")
-    filenames = [f.filename for f in images]
-    stems = [Path(fn).stem for fn in filenames]
+    # every check runs before anything is written
+    filenames = [safe_image_name(f.filename) for f in images]
+    stems = [Path(fn).stem.lower() for fn in filenames]
     if len(stems) != len(set(stems)):
         raise HTTPException(400, "yüklenen resimler arasında tekrarlayan dosya adı var")
+
+    photos = []  # (name, bytes to write, width, height)
+    for fn, upload in zip(filenames, images):
+        content = await upload.read()
+        try:
+            with PillowImage.open(io.BytesIO(content)) as im:
+                fmt = im.format
+                upright = ImageOps.exif_transpose(im)
+                if upright is not im:  # phone photo stored sideways: keep it as people see it
+                    buf = io.BytesIO()
+                    upright.convert("RGB").save(buf, "JPEG" if fmt == "JPEG" else "PNG", quality=95)
+                    content = buf.getvalue()
+                w, h = upright.size
+        except Exception:
+            raise HTTPException(400, f"{fn}: resim açılamadı")
+        photos.append((fn, content, w, h))
+
+    ann_data = None
+    if annotations:
+        ann_bytes = await annotations.read()
+        try:
+            ann_data = json.loads(ann_bytes)
+        except json.JSONDecodeError as e:
+            raise HTTPException(400, f"annotations.json geçersiz JSON: {e}")
+        for key in ("categories", "images", "annotations"):
+            if key not in ann_data:
+                raise HTTPException(400, f"annotations.json eksik alan: '{key}'")
+        sizes = {fn: (w, h) for fn, _, w, h in photos}
+        for img in ann_data["images"]:
+            if img.get("file_name") not in sizes:
+                raise HTTPException(400, f"annotations.json'daki {img.get('file_name')!r} yüklenmedi")
+            if sizes[img["file_name"]] != (img.get("width"), img.get("height")):
+                raise HTTPException(400, f"{img['file_name']}: annotations.json boyutu "
+                                         f"{img.get('width')}x{img.get('height')}, resim {sizes[img['file_name']][0]}x{sizes[img['file_name']][1]}")
 
     slug = _slugify(name)
     pkg_dir = Path(projects_root) / slug
@@ -219,28 +311,20 @@ async def upload_project(
     while pkg_dir.exists():
         pkg_dir = Path(projects_root) / f"{slug}-{counter}"
         counter += 1
+    images_dir = (pkg_dir / "images").resolve()
     pkg_dir.mkdir(parents=True)
-    (pkg_dir / "images").mkdir()
+    images_dir.mkdir()
 
     try:
         image_entries = []
-        for i, upload in enumerate(images):
-            dest = pkg_dir / "images" / upload.filename
-            content = await upload.read()
+        for i, (fn, content, w, h) in enumerate(photos):
+            dest = (images_dir / fn).resolve()
+            if dest.parent != images_dir:  # belt and braces: safe_image_name already ensures this
+                raise HTTPException(400, f"geçersiz resim dosyası adı: {fn!r}")
             dest.write_bytes(content)
-            with PillowImage.open(dest) as im:
-                w, h = im.size
-            image_entries.append({"id": i + 1, "file_name": upload.filename, "width": w, "height": h})
+            image_entries.append({"id": i + 1, "file_name": fn, "width": w, "height": h})
 
-        if annotations:
-            ann_bytes = await annotations.read()
-            try:
-                ann_data = json.loads(ann_bytes)
-            except json.JSONDecodeError as e:
-                raise HTTPException(400, f"annotations.json geçersiz JSON: {e}")
-            for key in ("categories", "images", "annotations"):
-                if key not in ann_data:
-                    raise HTTPException(400, f"annotations.json eksik alan: '{key}'")
+        if ann_data is not None:
             (pkg_dir / "annotations.json").write_bytes(ann_bytes)
         else:
             ann_data = {
@@ -255,7 +339,7 @@ async def upload_project(
             )
 
         Package(pkg_dir)  # validate
-        project = registry.add_project(name, str(pkg_dir), reviewer)
+        project = registry.add_project(name, str(pkg_dir), reviewer, default_export_dir(pkg_dir))
         return _project_with_progress(project)
 
     except HTTPException:
@@ -298,7 +382,8 @@ def main():
     parser.add_argument("--package", default=None,
                         help="package folder (optional if registry has an active project)")
     parser.add_argument("--reviewer", default="unknown", help="reviewer name")
-    parser.add_argument("--export", default="export", help="YOLO dataset output folder")
+    parser.add_argument("--export", default=None,
+                        help="YOLO dataset output folder (default: <package>_export next to the package)")
     parser.add_argument("--registry", default="projects.json", help="path to projects registry JSON")
     parser.add_argument("--projects-dir", default="projects", dest="projects_dir",
                         help="root folder for newly uploaded projects")
@@ -309,17 +394,13 @@ def main():
     projects_root = args.projects_dir
 
     if args.package:
-        resolved = str(Path(args.package).resolve())
-        existing = registry.get_by_path(resolved)
-        if existing:
-            project = existing
-        else:
-            project = registry.add_project(Path(args.package).name, resolved, args.reviewer, args.export)
+        project = register_cli_package(args.package, args.reviewer, args.export)
         registry.set_active(project["id"])
         pkg = Package(project["path"])
         store = ReviewStore(pkg, project["reviewer"])
         active = ActiveProject(pkg, store, project["export_dir"])
-        print(f"package: {pkg.root} ({len(pkg.images)} images), reviewer: {project['reviewer']}", flush=True)
+        print(f"package: {pkg.root} ({len(pkg.images)} images), reviewer: {project['reviewer']}, "
+              f"export: {project['export_dir']}", flush=True)
     else:
         active_id = registry.get_active_id()
         if active_id:

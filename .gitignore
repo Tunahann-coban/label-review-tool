@@ -28,3 +28,7 @@ packages/
 # Runtime registry and uploaded projects (machine-specific)
 projects.json
 projects/
+
+# Default export folders (<package>_export, <package>_export_coco)
+*_export/
+*_export_coco/

@@ -24,7 +24,7 @@ export default function CreateProjectDialog({ onCreated, onCancel }) {
     if (annotationFile) fd.append('annotations', annotationFile)
     try {
       const project = await postUploadProject(fd)
-      try { localStorage.setItem('last_reviewer', reviewer) } catch {}
+      try { localStorage.setItem('last_reviewer', reviewer) } catch { /* storage blocked: just not remembered */ }
       onCreated(project)
     } catch (err) {
       setError(err.message)
