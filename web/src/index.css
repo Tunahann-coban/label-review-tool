@@ -497,6 +497,15 @@ button.icon {
   text-align: right;
 }
 
+.dialog .split-table {
+  margin-top: 10px;
+}
+
+.dialog .split-table td:not(:first-child),
+.dialog .split-table th:not(:first-child) {
+  text-align: right;
+}
+
 .dialog-actions {
   display: flex;
   justify-content: flex-end;

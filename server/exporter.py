@@ -1,9 +1,9 @@
-"""Writes reviewed images as a YOLO segmentation dataset.
+"""Writes reviewed images as a YOLO segmentation dataset, split by storage unit.
 
 export/
-  images/<file>            copied images
-  labels/<stem>.txt        one line per object: <class_index> x1 y1 x2 y2 ... (0-1)
-  data.yaml                class names, same order as package categories
+  images/{train,val,test}/<file>     copied images
+  labels/{train,val,test}/<stem>.txt one line per object: <class_index> x1 y1 x2 y2 ... (0-1)
+  data.yaml                          set folders + class names, same order as package categories
 """
 import json
 import shutil
@@ -11,6 +11,7 @@ from pathlib import Path
 
 from PIL import Image
 
+import splits
 from package import merge_objects
 
 MARKER = ".label-review-export"  # only folders carrying this file are ever replaced
@@ -91,13 +92,20 @@ def merge_parts(polygons):
     return [v for pt in path for v in pt]
 
 
-def data_yaml(categories):
-    # names are quoted (JSON strings are valid YAML) so ":" "#" "yes" etc. stay plain text
+def data_yaml(categories, present):
+    """present: the sets that have images. YOLO needs a val set to train; when it is
+    empty the train set stands in (and the export says so in its warnings)."""
     lines = ["# Written by the label review tool. Class index = position in this list.",
-             "train: images",
-             "val: images",
-             f"nc: {len(categories)}",
-             "names:"]
+             "# Sets are whole storage units (see server/splits.py).",
+             "train: images/train"]
+    if "val" in present:
+        lines.append("val: images/val")
+    else:
+        lines.append("val: images/train  # NO validation units yet: train set used, scores are not real")
+    if "test" in present:
+        lines.append("test: images/test")
+    # names are quoted (JSON strings are valid YAML) so ":" "#" "yes" etc. stay plain text
+    lines += [f"nc: {len(categories)}", "names:"]
     lines += [f"  - {json.dumps(c['name'], ensure_ascii=False)}" for c in categories]
     return "\n".join(lines) + "\n"
 
@@ -122,10 +130,15 @@ def plan(pkg, store):
     warn = summary["warnings"].append
     files = []
 
+    reviewed = [img for image_id, img in pkg.images.items() if store.status(image_id) == "reviewed"]
+    split_by_image, units_per_split, split_warnings = splits.assign(reviewed)
+    per_split = {s: {"images": 0, "objects": 0, "units": units_per_split[s]} for s in splits.SPLITS}
+
     for image_id, img in pkg.images.items():
-        if store.status(image_id) != "reviewed":
+        if image_id not in split_by_image:
             summary["pending_images"] += 1
             continue
+        split = split_by_image[image_id]
         name, width, height = img["file_name"], img["width"], img["height"]
         stem = Path(name).stem  # unique, checked when the package is loaded
         src = pkg.image_path(image_id)
@@ -145,16 +158,16 @@ def plan(pkg, store):
         for obj in export_objects(pkg, store, image_id):
             cls = class_index.get(obj["category_id"])
             if cls is None:
-                warn(f"{name}: nesne {obj['id']} bilinmeyen sınıf {obj['category_id']}, atlandı")
+                warn(f"{name}: nesne #{obj['id']}: bilinmeyen sınıf {obj['category_id']}, atlandı")
                 continue
             parts = []
             for poly in obj["segmentation"]:
                 if len(poly) < 6 or len(poly) % 2:
-                    warn(f"{name}: nesne {obj['id']} geçersiz çokgen ({len(poly)} değer), atlandı")
+                    warn(f"{name}: nesne #{obj['id']}: geçersiz çokgen ({len(poly)} değer), atlandı")
                     continue
                 parts.append(poly)
             if len(parts) > 1:  # one object, one line (see merge_parts)
-                warn(f"{name}: nesne {obj['id']} {len(parts)} parçalı, tek satırda birleştirildi")
+                warn(f"{name}: nesne #{obj['id']}: {len(parts)} parçalı, tek satırda birleştirildi")
             if parts:
                 lines.append(f"{cls} {normalize(merge_parts(parts), width, height)}")
                 summary["objects"] += 1
@@ -162,27 +175,37 @@ def plan(pkg, store):
                 # nobody looked at it: it goes in exactly as the pipeline gave it
                 summary["untouched_objects"] += obj["state"] == "auto"
 
-        files.append((src, name, lines))
+        files.append((src, name, lines, split))
         summary["images"] += 1
         summary["empty_images"] += not lines
+        per_split[split]["images"] += 1
+        per_split[split]["objects"] += len(lines)
 
     summary["per_class"] = [{"index": i, "name": c["name"], "count": per_class[i]}
                             for i, c in enumerate(pkg.categories)]
+    summary["splits"] = per_split
+    summary["warnings"] = split_warnings + summary["warnings"]
+    if reviewed and not per_split["val"]["images"]:
+        summary["warnings"].append("data.yaml'da doğrulama (val) yerine eğitim kümesi yazıldı: "
+                                   "eğitim çalışır ama doğrulama skorları gerçek değildir")
     return files, summary
 
 
 def build(pkg, store, out_dir):
     """Write the dataset into out_dir (must not exist). Returns a summary."""
     files, summary = plan(pkg, store)
-    (out_dir / "images").mkdir(parents=True)
-    (out_dir / "labels").mkdir()
+    out_dir.mkdir(parents=True)
     (out_dir / MARKER).write_text("created by the label review tool\n", encoding="utf-8")
-    (out_dir / "data.yaml").write_text(data_yaml(pkg.categories), encoding="utf-8")
-    for src, name, lines in files:
+    present = {split for *_, split in files}
+    for split in present | {"train"}:  # train always exists: data.yaml points to it
+        (out_dir / "images" / split).mkdir(parents=True)
+        (out_dir / "labels" / split).mkdir(parents=True)
+    (out_dir / "data.yaml").write_text(data_yaml(pkg.categories, present), encoding="utf-8")
+    for src, name, lines, split in files:
         # an empty file is written on purpose: a reviewed image with no objects is a background example
-        (out_dir / "labels" / f"{Path(name).stem}.txt").write_text(
+        (out_dir / "labels" / split / f"{Path(name).stem}.txt").write_text(
             "".join(line + "\n" for line in lines), encoding="utf-8")
-        shutil.copy2(src, out_dir / "images" / name)
+        shutil.copy2(src, out_dir / "images" / split / name)
     return summary
 
 

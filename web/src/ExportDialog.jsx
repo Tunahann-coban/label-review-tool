@@ -1,5 +1,23 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
+const SET_NAMES = { train: 'eğitim', val: 'doğrulama', test: 'test' }
+
+// Train / val / test by storage unit (server/splits.py): whole units per set.
+function SplitTable({ splits }) {
+  return (
+    <table className="split-table">
+      <thead><tr><th>küme</th><th>ünite</th><th>resim</th><th>nesne</th></tr></thead>
+      <tbody>
+        {Object.entries(SET_NAMES).map(([key, label]) => (
+          <tr key={key} className={splits[key].images === 0 ? 'muted' : ''}>
+            <td>{label}</td><td>{splits[key].units}</td><td>{splits[key].images}</td><td>{splits[key].objects}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  )
+}
+
 // ExportDialog manages its own loading/done/exporting state.
 // Props: onFetchPreview(format), onRunExport(format), onDone(result, format), onClose
 export default function ExportDialog({ onFetchPreview, onRunExport, onDone, onClose }) {
@@ -126,6 +144,7 @@ export default function ExportDialog({ onFetchPreview, onRunExport, onDone, onCl
                 )}
               </>
             )}
+            {summary.splits && <SplitTable splits={summary.splits} />}
             {summary.warnings?.length > 0 && (
               <>
                 <p><b>Uyarılar ({summary.warnings.length})</b></p>

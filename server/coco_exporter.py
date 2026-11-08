@@ -1,13 +1,16 @@
-"""Writes reviewed images as a COCO JSON dataset.
+"""Writes reviewed images as COCO JSON, one file per set, split by storage unit.
 
-export/
-  instances_reviewed.json   standard COCO instance segmentation format
+<export>_coco/
+  instances_train.json   standard COCO instance segmentation format
+  instances_val.json     (only the sets that have images)
+  instances_test.json
 """
 import json
 import os
 from datetime import datetime
 from pathlib import Path
 
+import splits
 from package import bbox_of, merge_objects
 
 
@@ -23,87 +26,67 @@ def area_of(segmentation):
 
 
 def build_coco(pkg, store):
+    """({split: coco dict}, summary). Only reviewed images; deleted objects left out."""
+    reviewed = [img for img_id, img in pkg.images.items() if store.status(img_id) == "reviewed"]
+    split_by_image, units_per_split, warnings = splits.assign(reviewed)
+    categories = [{"id": c["id"], "name": c["name"], "supercategory": c.get("supercategory", "")}
+                  for c in pkg.categories]
+    created = datetime.now().isoformat(timespec="seconds")
+    sets = {s: {"info": {"description": f"Reviewed by label-review-tool ({s})", "version": "1.0",
+                         "date_created": created},
+                "categories": categories, "images": [], "annotations": []} for s in splits.SPLITS}
     ann_id = 1
-    images_out = []
-    annotations_out = []
-    pending = 0
-    warnings = []
 
-    for img in pkg.images.values():
+    for img in reviewed:
         image_id = img["id"]
-        if store.status(image_id) != "reviewed":
-            pending += 1
-            continue
-
-        review = store.load(image_id)
-        objects = merge_objects(pkg.annotations.get(image_id, []), review)
-        exportable = [o for o in objects if o["state"] != "deleted"]
-
-        images_out.append({
-            "id": img["id"],
-            "file_name": img["file_name"],
-            "width": img["width"],
-            "height": img["height"],
-        })
-
-        for obj in exportable:
-            seg = obj["segmentation"]
-            cls = obj["category_id"]
-            if cls not in pkg.category_ids:
-                warnings.append(f"{img['file_name']}: nesne {obj['id']} bilinmeyen sınıf {cls}, atlandı")
+        coco = sets[split_by_image[image_id]]
+        objects = merge_objects(pkg.annotations.get(image_id, []), store.load(image_id))
+        coco["images"].append({"id": image_id, "file_name": img["file_name"],
+                               "width": img["width"], "height": img["height"]})
+        for obj in objects:
+            if obj["state"] == "deleted":
                 continue
-            if len(seg) > 1:
-                warnings.append(f"{img['file_name']}: nesne {obj['id']} {len(seg)} parçalı, alan tahmini yaklaşık")
-            annotations_out.append({
-                "id": ann_id,
-                "image_id": image_id,
-                "category_id": cls,
-                "segmentation": seg,
-                "bbox": bbox_of(seg),
-                "area": area_of(seg),
-                "iscrowd": 0,
-            })
+            seg, cls = obj["segmentation"], obj["category_id"]
+            if cls not in pkg.category_ids:
+                warnings.append(f"{img['file_name']}: nesne #{obj['id']}: bilinmeyen sınıf {cls}, atlandı")
+                continue
+            # COCO keeps a split object as a list of polygons: no merging needed here
+            coco["annotations"].append({"id": ann_id, "image_id": image_id, "category_id": cls,
+                                        "segmentation": seg, "bbox": bbox_of(seg),
+                                        "area": area_of(seg), "iscrowd": 0})
             ann_id += 1
 
-    coco = {
-        "info": {
-            "description": "Reviewed by label-review-tool",
-            "version": "1.0",
-            "date_created": datetime.now().isoformat(timespec="seconds"),
-        },
-        "categories": [
-            {"id": c["id"], "name": c["name"], "supercategory": c.get("supercategory", "")}
-            for c in pkg.categories
-        ],
-        "images": images_out,
-        "annotations": annotations_out,
-    }
-
     summary = {
-        "images": len(images_out),
-        "annotations": len(annotations_out),
-        "pending_images": pending,
+        "images": len(reviewed),
+        "annotations": ann_id - 1,
+        "pending_images": len(pkg.images) - len(reviewed),
+        "splits": {s: {"images": len(sets[s]["images"]), "objects": len(sets[s]["annotations"]),
+                       "units": units_per_split[s]} for s in splits.SPLITS},
         "warnings": warnings,
     }
-
-    return coco, summary
+    return {s: c for s, c in sets.items() if c["images"]}, summary
 
 
 def preview_coco(pkg, store, target):
     """What export_coco() would write; nothing is written."""
     _, summary = build_coco(pkg, store)
-    summary["path"] = str(Path(target).resolve() / "instances_reviewed.json")
+    summary["path"] = str(Path(target).resolve())
     return summary
 
 
 def export_coco(pkg, store, target):
-    """Atomic write of instances_reviewed.json into target/."""
-    coco, summary = build_coco(pkg, store)
+    """Writes instances_<set>.json for each set with images; removes files of sets
+    that became empty, so a stale set file never lingers. Each file is swapped in atomically."""
+    sets, summary = build_coco(pkg, store)
     out_dir = Path(target).resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
-    out = out_dir / "instances_reviewed.json"
-    tmp = out.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(coco, ensure_ascii=False, indent=1), encoding="utf-8")
-    os.replace(tmp, out)
-    summary["path"] = str(out)
+    for s in splits.SPLITS:
+        out = out_dir / f"instances_{s}.json"
+        if s in sets:
+            tmp = out.with_suffix(".json.tmp")
+            tmp.write_text(json.dumps(sets[s], ensure_ascii=False, indent=1), encoding="utf-8")
+            os.replace(tmp, out)
+        elif out.exists():
+            out.unlink()
+    summary["path"] = str(out_dir)
     return summary

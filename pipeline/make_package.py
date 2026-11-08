@@ -189,8 +189,11 @@ class PackageBuilder:
         self._next_ann, self._next_cand = 1, 100001  # candidate ids never collide with object ids
 
     def add_image(self, src_path):
-        """Copies the photo upright into the package. Returns (image_id, rgb array)."""
+        """Copies the photo upright into the package. Returns (image_id, rgb array).
+        The storage unit is read from the ORIGINAL name (unit001_photo3.jpg -> unit001),
+        before spaces become "_" below, and written into the package."""
         src = Path(src_path)
+        unit = src.stem.split("_", 1)[0].strip().lower() if "_" in src.stem else None
         rgb = load_upright(src)
         stem = src.stem.replace(" ", "_")
         base, n = stem, 2
@@ -202,7 +205,7 @@ class PackageBuilder:
         h, w = rgb.shape[:2]
         image_id = len(self.images) + 1
         self.images.append({"id": image_id, "file_name": name, "width": int(w), "height": int(h),
-                            "source": str(src)})
+                            "unit": unit, "source": str(src)})
         return image_id, rgb
 
     def add_annotation(self, image_id, class_name, polygons, score):

@@ -179,6 +179,10 @@ def test_exif(tmp):
     check("recorded size = saved size = model input",
           (info["width"], info["height"]) == saved.size and arr.shape[1::-1] == saved.size)
     check("space in file name replaced", info["file_name"] == "phone_photo.jpg")
+    check("no '_' in the original name -> unit null (not 'phone' from the cleaned name)", info["unit"] is None)
+    Image.fromarray(raw).save(tmp / "Unit07_back wall.jpg")
+    b.add_image(tmp / "Unit07_back wall.jpg")
+    check("unit read from the original name, lower case", b.images[-1]["unit"] == "unit07")
 
 
 def test_package_end_to_end(tmp):
@@ -225,8 +229,11 @@ def test_package_end_to_end(tmp):
     store.apply(1, action="add", candidate_id=pkg.candidates[1][0]["id"],
                 category_id=next(c["id"] for c in pkg.categories if c["name"] == "misc_item"))
     s = exporter.export(pkg, store, tmp / "export")
-    check("export has no warnings (sizes match, polygons valid)", s["warnings"] == [])
-    lines = (tmp / "export" / "labels" / f"{Path(pkg.images[1]['file_name']).stem}.txt").read_text().splitlines()
+    other = [w for w in s["warnings"] if "ünite" not in w and "kümesi" not in w and "doğrulama" not in w]
+    check(f"export: no size / polygon warnings ({other})", other == [])
+    check("export: names without a unit are reported", any("adında ünite yok" in w for w in s["warnings"]))
+    (label,) = (tmp / "export" / "labels").rglob(f"{Path(pkg.images[1]['file_name']).stem}.txt")
+    lines = label.read_text().splitlines()
     check("box -> class 0, added candidate as misc_item -> class 18",
           sorted(int(l.split()[0]) for l in lines) == [0, 18])
 

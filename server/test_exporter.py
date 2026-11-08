@@ -77,10 +77,65 @@ def test_merge_parts():
         check(f"  gap between parts not filled ({len(got & gap)} px of {len(gap)})", len(got & gap) <= 3)
 
 
+def test_unit_split_export(tmp):
+    """30 storage units, 2 photos each: sets get whole units, YOLO and COCO agree."""
+    import coco_exporter
+    import splits
+    from PIL import Image as PILImage
+    root = tmp / "units"
+    (root / "images").mkdir(parents=True)
+    images, anns = [], []
+    for u in range(1, 31):
+        for k in range(2):
+            i = len(images) + 1
+            name = f"unit{u:03d}_photo{k}.jpg"
+            PILImage.new("RGB", (64, 48), (90, 90, 90)).save(root / "images" / name)
+            images.append({"id": i, "file_name": name, "width": 64, "height": 48})
+            anns.append({"id": i, "image_id": i, "category_id": 1, "bbox": [5, 5, 20, 20],
+                         "segmentation": [[5, 5, 25, 5, 25, 25, 5, 25]], "score": 0.9})
+    (root / "annotations.json").write_text(json.dumps(
+        {"categories": [{"id": 1, "name": "chair"}], "images": images, "annotations": anns,
+         "candidates": []}), encoding="utf-8")
+    pkg = Package(root)
+    store = ReviewStore(pkg, "tester")
+    for img in images:
+        store.apply(img["id"], img["id"], "accept")
+
+    s = exporter.export(pkg, store, tmp / "units_export")
+    out = tmp / "units_export"
+    on_disk = {sp: sorted(p.name for p in (out / "images" / sp).iterdir()) for sp in splits.SPLITS
+               if (out / "images" / sp).exists()}
+    expected = {}
+    for img in images:
+        expected.setdefault(splits.split_of(img["file_name"].split("_")[0]), []).append(img["file_name"])
+    check(f"photos sit in their unit's set ({ {k: len(v) for k, v in on_disk.items()} })",
+          on_disk == {k: sorted(v) for k, v in expected.items()})
+    unit_sets = {}
+    for sp, names in on_disk.items():
+        for n in names:
+            unit_sets.setdefault(n.split("_")[0], set()).add(sp)
+    check("no unit split across sets", all(len(v) == 1 for v in unit_sets.values()))
+    check("labels next to their images", all((out / "labels" / sp / (Path(n).stem + ".txt")).exists()
+                                             for sp, names in on_disk.items() for n in names))
+    yaml = (out / "data.yaml").read_text(encoding="utf-8")
+    check("data.yaml lists train, val and test", all(f"{k}: images/{k}\n" in yaml for k in ("train", "val", "test")))
+    check("summary units add up to 30", sum(v["units"] for v in s["splits"].values()) == 30)
+    check("well-named units: no split warnings", not any("ünite" in w or "boş" in w for w in s["warnings"]))
+
+    c = coco_exporter.export_coco(pkg, store, tmp / "units_coco")
+    files = sorted(p.name for p in (tmp / "units_coco").iterdir())
+    check(f"COCO: one file per set ({files})", files == ["instances_test.json", "instances_train.json", "instances_val.json"])
+    coco_names = {sp: sorted(i["file_name"] for i in json.loads(
+        (tmp / "units_coco" / f"instances_{sp}.json").read_text(encoding="utf-8"))["images"]) for sp in on_disk}
+    check("COCO sets hold the same photos as YOLO sets", coco_names == on_disk)
+    check("COCO and YOLO summaries agree per set", c["splits"] == s["splits"])
+
+
 def main():
     tmp = Path(tempfile.mkdtemp())
     try:
         test_merge_parts()
+        test_unit_split_export(tmp)
         run(tmp)
     finally:
         shutil.rmtree(tmp)
@@ -119,10 +174,10 @@ def run(tmp):
     check("pending images counted", s["pending_images"] == 1)
 
     # --- layout ---
-    check("only reviewed images copied", sorted(p.name for p in (out / "images").iterdir()) == ["img_001.jpg", "img_002.jpg"])
-    check("one label per reviewed image", sorted(p.name for p in (out / "labels").iterdir()) == ["img_001.txt", "img_002.txt"])
-    check("pending image left out", not (out / "labels" / "img_003.txt").exists())
-    check("images copied byte for byte", filecmp.cmp(out / "images" / "img_001.jpg", tmp / "pkg" / "images" / "img_001.jpg", shallow=False))
+    check("only reviewed images copied", sorted(p.name for p in (out / "images" / "train").iterdir()) == ["img_001.jpg", "img_002.jpg"])
+    check("one label per reviewed image", sorted(p.name for p in (out / "labels" / "train").iterdir()) == ["img_001.txt", "img_002.txt"])
+    check("pending image left out", not (out / "labels" / "train" / "img_003.txt").exists())
+    check("images copied byte for byte", filecmp.cmp(out / "images" / "train" / "img_001.jpg", tmp / "pkg" / "images" / "img_001.jpg", shallow=False))
     check("no temp folders left", not (tmp / "export.tmp").exists() and not (tmp / "export.old").exists())
 
     # --- data.yaml ---
@@ -131,9 +186,18 @@ def run(tmp):
     check("names in categories order", names == [c["name"] for c in cats])
     check("special names are quoted", '  - "a: b # c"' in yaml and '  - "yes"' in yaml)
     check("nc matches", f"nc: {len(cats)}" in yaml)
+    # img_001 / img_002 / img_003 share the unit "img": one unit, so everything is train
+    check("data.yaml points to the train set", "train: images/train" in yaml)
+    check("no val units: val falls back to train, said in data.yaml", any(l.startswith("val: images/train  # NO validation") for l in yaml))
+    check("no test units: no test line", not any(l.startswith("test:") for l in yaml))
+    check("only the train folders exist", sorted(p.name for p in (out / "images").iterdir()) == ["train"])
+    check("summary per set", s["splits"]["train"]["images"] == 2 and s["splits"]["train"]["units"] == 1
+          and s["splits"]["val"]["images"] == 0)
+    w_all = " | ".join(s["warnings"])
+    check("one-unit and empty-set warnings shown", "tek ünitede ('img')" in w_all and "doğrulama kümesi boş" in w_all)
 
     # --- img_001 labels ---
-    rows = read_labels(out / "labels" / "img_001.txt")
+    rows = read_labels(out / "labels" / "train" / "img_001.txt")
     w, h = pkg.images[1]["width"], pkg.images[1]["height"]
     kept = [a for a in anns1 if a["id"] != deleted["id"]]
     expected_lines = len(kept) + 1  # one line per object, parts merged; + the added one
@@ -165,7 +229,7 @@ def run(tmp):
     check("point outside image clamped to edge", rows[1][1][0] == 0.0 and rows[1][1][1] == 1.0)
 
     # --- img_002 ---
-    check("all objects deleted -> empty label file", (out / "labels" / "img_002.txt").read_text() == "")
+    check("all objects deleted -> empty label file", (out / "labels" / "train" / "img_002.txt").read_text() == "")
 
     # --- summary ---
     check("summary counts", s["images"] == 2 and s["empty_images"] == 1 and s["objects"] == len(kept) + 1)
@@ -179,7 +243,7 @@ def run(tmp):
     (tmp / "pkg" / "reviews" / "img_002.json").unlink()  # img_002 back to pending
     exporter.export(pkg, store, out)
     check("re-export drops files of images no longer reviewed",
-          not (out / "labels" / "img_002.txt").exists() and not (out / "images" / "img_002.jpg").exists())
+          not (out / "labels" / "train" / "img_002.txt").exists() and not (out / "images" / "train" / "img_002.jpg").exists())
 
     # --- safety ---
     foreign = tmp / "not_ours"
