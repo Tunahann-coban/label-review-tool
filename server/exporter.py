@@ -30,6 +30,67 @@ def normalize(poly, width, height):
     return " ".join(out)
 
 
+def _ring(flat):
+    return [(flat[i], flat[i + 1]) for i in range(0, len(flat) - 1, 2)]
+
+
+def _ring_area(pts):
+    return abs(sum(x1 * y2 - x2 * y1 for (x1, y1), (x2, y2) in zip(pts, pts[1:] + pts[:1]))) / 2
+
+
+def _closest(a, b):
+    """Indexes (i in a, j in b) of the nearest pair of points."""
+    best = None
+    for i, (ax, ay) in enumerate(a):
+        for j, (bx, by) in enumerate(b):
+            d = (ax - bx) ** 2 + (ay - by) ** 2
+            if best is None or d < best[0]:
+                best = (d, i, j)
+    return best[1], best[2]
+
+
+def _gap(a, b):
+    i, j = _closest(a, b)
+    return (a[i][0] - b[j][0]) ** 2 + (a[i][1] - b[j][1]) ** 2
+
+
+def _arc(ring, start, end):
+    """Points of the ring from start to end (inclusive), going forward and wrapping."""
+    n = len(ring)
+    steps = (end - start) % n
+    return [ring[(start + s) % n] for s in range(steps + 1)]
+
+
+def merge_parts(polygons):
+    """One polygon for an object split into parts (e.g. a sofa cut in two by a box in front).
+
+    YOLO-seg allows one polygon per object line; writing each part as its own line
+    would teach the model that one occluded object is several objects. The parts are
+    chained, biggest first then nearest, with zero-width bridges between their closest
+    points: the path goes out over each bridge and comes back over the same bridge,
+    so filling the polygon gives exactly the parts and nothing in between.
+    """
+    parts = [_ring(p) for p in polygons]
+    if len(parts) == 1:
+        return polygons[0]
+    remaining = sorted(parts, key=_ring_area, reverse=True)
+    chain = [remaining.pop(0)]
+    while remaining:  # nearest next part to the last one in the chain
+        nxt = min(remaining, key=lambda r: _gap(chain[-1], r))
+        remaining.remove(nxt)
+        chain.append(nxt)
+    links = [_closest(chain[k], chain[k + 1]) for k in range(len(chain) - 1)]  # (out on k, in on k+1)
+
+    path = _arc(chain[0], links[0][0], links[0][0] - 1) + [chain[0][links[0][0]]]
+    for k in range(1, len(chain) - 1):  # middle parts: in-point -> out-point on the way out
+        path += _arc(chain[k], links[k - 1][1], links[k][0])
+    last_in = links[-1][1]
+    path += _arc(chain[-1], last_in, last_in - 1) + [chain[-1][last_in]]
+    for k in range(len(chain) - 2, 0, -1):  # and the rest of each middle part on the way back
+        path += _arc(chain[k], links[k][0], links[k - 1][1])
+    return [v for pt in path for v in pt]
+
+
 def data_yaml(categories):
     # names are quoted (JSON strings are valid YAML) so ":" "#" "yes" etc. stay plain text
     lines = ["# Written by the label review tool. Class index = position in this list.",
@@ -86,17 +147,16 @@ def plan(pkg, store):
             if cls is None:
                 warn(f"{name}: nesne {obj['id']} bilinmeyen sınıf {obj['category_id']}, atlandı")
                 continue
-            parts = obj["segmentation"]
-            if len(parts) > 1:
-                warn(f"{name}: nesne {obj['id']} {len(parts)} parçalı, her parça ayrı satır")
-            written = 0
-            for poly in parts:
+            parts = []
+            for poly in obj["segmentation"]:
                 if len(poly) < 6 or len(poly) % 2:
                     warn(f"{name}: nesne {obj['id']} geçersiz çokgen ({len(poly)} değer), atlandı")
                     continue
-                lines.append(f"{cls} {normalize(poly, width, height)}")
-                written += 1
-            if written:
+                parts.append(poly)
+            if len(parts) > 1:  # one object, one line (see merge_parts)
+                warn(f"{name}: nesne {obj['id']} {len(parts)} parçalı, tek satırda birleştirildi")
+            if parts:
+                lines.append(f"{cls} {normalize(merge_parts(parts), width, height)}")
                 summary["objects"] += 1
                 per_class[cls] += 1
                 # nobody looked at it: it goes in exactly as the pipeline gave it

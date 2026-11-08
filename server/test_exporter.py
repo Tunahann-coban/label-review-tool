@@ -52,9 +52,35 @@ def read_labels(path):
     return rows
 
 
+def fill(polygon, w=200, h=120):
+    """Pixels inside a flat polygon, the way a YOLO loader rasterizes it."""
+    from PIL import Image, ImageDraw
+    im = Image.new("1", (w, h), 0)
+    ImageDraw.Draw(im).polygon(list(zip(polygon[0::2], polygon[1::2])), fill=1)
+    return {(x, y) for y in range(h) for x in range(w) if im.getpixel((x, y))}
+
+
+def test_merge_parts():
+    a = [10, 10, 60, 10, 60, 50, 10, 50]           # left box
+    b = [120, 20, 180, 20, 180, 90, 120, 90]       # right box, a gap between
+    c = [70, 95, 100, 95, 100, 115, 70, 115]       # small one below
+    check("single part returned unchanged", exporter.merge_parts([a]) == a)
+    for parts in ([a, b], [a, b, c], [c, a, b], [b, c, a]):
+        merged = exporter.merge_parts(parts)
+        union = set().union(*(fill(p) for p in parts))
+        got = fill(merged)
+        extra, missing = len(got - union), len(union - got)
+        # zero-width bridges may light a thin line of pixels; the gap itself stays empty
+        check(f"merge of {len(parts)} parts fills their union (extra {extra} px, missing {missing} px)",
+              missing <= 4 and extra <= 3 * 60)
+        gap = {(x, 85) for x in range(65, 115)}   # a strip between the boxes
+        check(f"  gap between parts not filled ({len(got & gap)} px of {len(gap)})", len(got & gap) <= 3)
+
+
 def main():
     tmp = Path(tempfile.mkdtemp())
     try:
+        test_merge_parts()
         run(tmp)
     finally:
         shutil.rmtree(tmp)
@@ -110,8 +136,8 @@ def run(tmp):
     rows = read_labels(out / "labels" / "img_001.txt")
     w, h = pkg.images[1]["width"], pkg.images[1]["height"]
     kept = [a for a in anns1 if a["id"] != deleted["id"]]
-    expected_lines = sum(1 for a in kept for p in a["segmentation"] if len(p) >= 6 and len(p) % 2 == 0) + 1
-    check("deleted object left out, extra part written, invalid part skipped, added one in", len(rows) == expected_lines)
+    expected_lines = len(kept) + 1  # one line per object, parts merged; + the added one
+    check("one line per object: deleted left out, parts merged, added one in", len(rows) == expected_lines)
     check("added object written last with its class index", rows[-1][0] == index_of[added_cat])
     check("added-then-deleted object left out", len(rows) == expected_lines)
     check("changed object uses new class index", rows[0][0] == index_of[new_cat])
@@ -122,9 +148,14 @@ def run(tmp):
     check("x, y pairs with at least 3 points", all(len(vals) % 2 == 0 and len(vals) >= 6 for _, vals, _ in rows))
 
     # round trip: back to pixels must match the source (after clamping to the image)
-    src_polys = [p for a in kept for p in a["segmentation"] if len(p) >= 6 and len(p) % 2 == 0]
-    src_polys += added_cand["segmentation"]
+    valid = lambda segs: [p for p in segs if len(p) >= 6 and len(p) % 2 == 0]  # noqa: E731
+    src_polys = [exporter.merge_parts(valid(a["segmentation"])) for a in kept]
+    src_polys.append(exporter.merge_parts(added_cand["segmentation"]))
     check("one source polygon per line", len(src_polys) == len(rows))
+    two_part = next(a for a in kept if len(valid(a["segmentation"])) == 2)
+    merged_line = rows[[a["id"] for a in kept].index(two_part["id"])][1]
+    check("two-part object written as one line holding both parts' points",
+          len(merged_line) // 2 >= sum(len(p) // 2 for p in valid(two_part["segmentation"])))
     worst = 0.0
     for (_, vals, _), poly in zip(rows, src_polys):
         for i in range(0, len(poly), 2):
@@ -141,7 +172,7 @@ def run(tmp):
     check("per class counts add up", sum(c["count"] for c in s["per_class"]) == s["objects"])
     w_text = " | ".join(s["warnings"])
     check("warns about size mismatch", "img_002.jpg: annotations.json boyutu 640x600, dosya 800x600" in w_text)
-    check("warns about two-part object", "2 parçalı" in w_text)
+    check("warns about two-part object", "2 parçalı, tek satırda birleştirildi" in w_text)
     check("warns about invalid polygon", "geçersiz çokgen (4 değer)" in w_text)
 
     # --- re-export removes stale files ---
