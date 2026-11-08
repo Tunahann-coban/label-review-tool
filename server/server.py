@@ -10,6 +10,8 @@ import argparse
 import io
 import json
 import shutil
+import threading
+import webbrowser
 from pathlib import Path
 from typing import List
 from urllib.parse import urlsplit
@@ -17,11 +19,14 @@ from urllib.parse import urlsplit
 import uvicorn
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.staticfiles import StaticFiles
 from PIL import Image as PillowImage, ImageOps
 from pydantic import BaseModel
 
 import coco_exporter
+import edit_exporter
 import exporter
+import labelers
 from package import Package, merge_objects
 from project_registry import ProjectRegistry, slugify
 from review_store import ReviewError, ReviewStore
@@ -75,6 +80,10 @@ class Decision(BaseModel):
     candidate_id: int | None = None
 
 
+class StatusChange(BaseModel):
+    status: str  # pending | reviewed | needs_edit
+
+
 def get_active() -> ActiveProject:
     if active is None:
         raise HTTPException(503, "aktif proje yok — ana sayfadan bir proje seç")
@@ -91,6 +100,9 @@ def image_detail(pkg, store, image_id):
     return {
         "image": pkg.images[image_id],
         "status": review["status"] if review else "pending",
+        "status_by": (review or {}).get("status_by"),
+        "status_at": (review or {}).get("status_at"),
+        "editors": labelers.editors_of(review),
         "objects": merge_objects(pkg.annotations.get(image_id, []), review),
         "candidates": pkg.candidates.get(image_id, []),
     }
@@ -101,11 +113,12 @@ def _project_with_progress(project: dict) -> dict:
         pkg = Package(project["path"])
         store = ReviewStore(pkg, project["reviewer"])
         total = len(pkg.images)
-        reviewed = sum(1 for img_id in pkg.images if store.status(img_id) == "reviewed")
+        statuses = [store.status(img_id) for img_id in pkg.images]
         return {
             **project,
             "is_active": registry.get_active_id() == project["id"],
-            "progress": {"reviewed": reviewed, "total": total},
+            "progress": {"reviewed": statuses.count("reviewed"),
+                         "needs_edit": statuses.count("needs_edit"), "total": total},
             "valid": True,
             "error": None,
         }
@@ -113,7 +126,7 @@ def _project_with_progress(project: dict) -> dict:
         return {
             **project,
             "is_active": registry.get_active_id() == project["id"],
-            "progress": {"reviewed": 0, "total": 0},
+            "progress": {"reviewed": 0, "needs_edit": 0, "total": 0},
             "valid": False,
             "error": str(e),
         }
@@ -145,6 +158,11 @@ def coco_dir(export_dir):
     return str(Path(export_dir).resolve()) + "_coco"
 
 
+def edit_dir(export_dir):
+    """Images marked "needs editing" also get a folder of their own beside the others."""
+    return str(Path(export_dir).resolve()) + "_duzenlenecek"
+
+
 def register_cli_package(path, reviewer, export_dir):
     """--package: register the folder, or update it; the command-line values win."""
     resolved = str(Path(path).resolve())
@@ -160,11 +178,20 @@ def register_cli_package(path, reviewer, export_dir):
 @app.get("/api/package")
 def package_info():
     a = get_active()
-    images = [
-        {"id": img["id"], "file_name": img["file_name"], "status": a.store.status(img["id"])}
-        for img in a.pkg.images.values()
-    ]
-    return {"categories": a.pkg.categories, "images": images}
+    images = []
+    for img in a.pkg.images.values():
+        review = a.store.load(img["id"])
+        images.append({"id": img["id"], "file_name": img["file_name"],
+                       "status": review["status"] if review else "pending",
+                       "status_by": (review or {}).get("status_by")})
+    return {"categories": a.pkg.categories, "images": images, "reviewer": a.store.reviewer}
+
+
+@app.get("/api/labelers")
+def labelers_table():
+    """Who finished / changed each photo (the same table the exports write as labelers.csv)."""
+    a = get_active()
+    return {"columns": labelers.COLUMNS, "rows": labelers.rows(a.pkg, a.store)}
 
 
 @app.get("/api/images/{image_id}")
@@ -181,12 +208,50 @@ def image_file(image_id: int):
     return FileResponse(a.pkg.image_path(image_id))
 
 
+@app.get("/api/images/{image_id}/thumb")
+def image_thumb(image_id: int, request: Request):
+    """Small JPEG for the image list. The browser re-checks it by ETag every time,
+    because image ids repeat from project to project."""
+    a = get_active()
+    get_image_or_404(a.pkg, image_id)
+    path = a.pkg.image_path(image_id)
+    try:
+        stat = path.stat()
+    except OSError:
+        raise HTTPException(404, f"image {image_id}: dosya yok")
+    etag = f'"{stat.st_mtime_ns}-{stat.st_size}"'
+    headers = {"ETag": etag, "Cache-Control": "no-cache"}
+    if request.headers.get("if-none-match") == etag:
+        return Response(status_code=304, headers=headers)
+    try:
+        with PillowImage.open(path) as im:
+            small = ImageOps.exif_transpose(im).convert("RGB")
+            small.thumbnail((240, 240))
+            buf = io.BytesIO()
+            small.save(buf, "JPEG", quality=80)
+    except Exception:
+        raise HTTPException(404, f"image {image_id}: açılamadı")
+    return Response(buf.getvalue(), media_type="image/jpeg", headers=headers)
+
+
 @app.post("/api/images/{image_id}/review")
 def save_review(image_id: int, decision: Decision):
     a = get_active()
     get_image_or_404(a.pkg, image_id)
     try:
         a.store.apply(image_id, decision.ann_id, decision.action, decision.category_id, decision.candidate_id)
+    except ReviewError as e:
+        raise HTTPException(400, str(e))
+    return image_detail(a.pkg, a.store, image_id)
+
+
+@app.post("/api/images/{image_id}/status")
+def set_status(image_id: int, change: StatusChange):
+    """Tamamla / Düzenlenecek / back to pending. Object decisions are kept."""
+    a = get_active()
+    get_image_or_404(a.pkg, image_id)
+    try:
+        a.store.set_status(image_id, change.status)
     except ReviewError as e:
         raise HTTPException(400, str(e))
     return image_detail(a.pkg, a.store, image_id)
@@ -225,6 +290,25 @@ def do_coco_export():
     a = get_active()
     with a.store.lock:
         return coco_exporter.export_coco(a.pkg, a.store, coco_dir(a.export_dir))
+
+
+# ── "needs editing" export (photos + current masks, for Roboflow) ──────────
+
+@app.get("/api/export/edit/preview")
+def edit_preview():
+    a = get_active()
+    with a.store.lock:
+        return edit_exporter.preview(a.pkg, a.store, edit_dir(a.export_dir))
+
+
+@app.post("/api/export/edit")
+def do_edit_export():
+    a = get_active()
+    with a.store.lock:
+        try:
+            return edit_exporter.export(a.pkg, a.store, edit_dir(a.export_dir))
+        except exporter.ExportError as e:
+            raise HTTPException(409, str(e))
 
 
 # ── project management ─────────────────────────────────────────────────────
@@ -374,6 +458,22 @@ def delete_project(project_id: str):
     return Response(status_code=204)
 
 
+# ── the web page itself ────────────────────────────────────────────────────
+# With web/dist built (npm run build), this service also serves the page, so the tool
+# runs as one program: baslat.bat / baslat.sh. In development Vite serves it instead.
+# Added last: the /api routes above always win.
+
+WEB_DIST = Path(__file__).resolve().parent.parent / "web" / "dist"
+
+
+def mount_web(dist=WEB_DIST, target=None):
+    target = target or app
+    if (Path(dist) / "index.html").exists():
+        target.mount("/", StaticFiles(directory=dist, html=True), name="web")
+        return True
+    return False
+
+
 # ── startup ────────────────────────────────────────────────────────────────
 
 def main():
@@ -388,6 +488,8 @@ def main():
     parser.add_argument("--projects-dir", default="projects", dest="projects_dir",
                         help="root folder for newly uploaded projects")
     parser.add_argument("--port", type=int, default=8000)
+    parser.add_argument("--open", action="store_true",
+                        help="open the page in the browser once the service is up (needs web/dist)")
     args = parser.parse_args()
 
     registry = ProjectRegistry(args.registry)
@@ -415,6 +517,14 @@ def main():
                     print(f"uyarı: aktif proje yüklenemedi ({e}), ana sayfa boş açılacak", flush=True)
         else:
             print("aktif proje yok — ana sayfadan bir proje seç veya --package ile başlat", flush=True)
+
+    served = mount_web()
+    if served:
+        print(f"page: http://localhost:{args.port}", flush=True)
+        if args.open:
+            threading.Timer(1.5, webbrowser.open, args=(f"http://localhost:{args.port}",)).start()
+    elif args.open:
+        print("uyarı: web/dist yok, sayfa açılmadı (npm run build ya da baslat.bat)", flush=True)
 
     uvicorn.run(app, host="127.0.0.1", port=args.port)
 

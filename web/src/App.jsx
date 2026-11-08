@@ -1,16 +1,18 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
-  fetchCOCOExportPreview, fetchExportPreview, fetchImage, fetchPackage,
-  postCOCOExport, postExport, postReview,
+  fetchCOCOExportPreview, fetchEditExportPreview, fetchExportPreview, fetchImage, fetchPackage,
+  postCOCOExport, postEditExport, postExport, postReview, postStatus,
 } from './api'
 import ExportDialog from './ExportDialog'
 import Toast from './Toast'
+import ImageList from './ImageList'
+import ImageStatusCard from './ImageStatusCard'
 import ImageViewer from './ImageViewer'
 import ObjectList from './ObjectList'
 import SelectedPanel from './SelectedPanel'
 import { DEFAULT_THRESHOLD, catchAllCategories, orderObjects } from './suspects'
 import Toolbar from './Toolbar'
-import { findNextPending } from './navigation'
+import { findNextPending, moveInGroup } from './navigation'
 import { availableCandidates } from './candidates'
 import { nextMaskView } from './maskView'
 
@@ -33,6 +35,8 @@ export default function App({ onGoHome }) {
   const [showCandidates, setShowCandidates] = useState(false)
   const [maskView, setMaskView] = useState('fill')
   const [selectedCandidateId, setSelectedCandidateId] = useState(null)
+  const [group, setGroup] = useState('all')      // which "folder" Previous / Next walk through
+  const [sideTab, setSideTab] = useState('objects')  // 'objects' | 'images'
 
   const selectObject = useCallback((id) => { setSelectedId(id); setSelectedCandidateId(null) }, [])
   const selectCandidate = useCallback((id) => { setSelectedCandidateId(id); setSelectedId(null) }, [])
@@ -67,11 +71,13 @@ export default function App({ onGoHome }) {
     [pkg],
   )
 
-  const total = pkg?.images.length ?? 0
+  // Previous / Next stay inside the chosen group
   const go = useCallback(
-    (delta) => setIndex((i) => Math.min(total - 1, Math.max(0, i + delta))),
-    [total],
+    (delta) => setIndex((i) => (pkg ? moveInGroup(pkg.images, group, i, delta) : i)),
+    [pkg, group],
   )
+  const canPrev = pkg ? moveInGroup(pkg.images, group, index, -1) !== index : false
+  const canNext = pkg ? moveInGroup(pkg.images, group, index, 1) !== index : false
 
   const catchAll = useMemo(() => catchAllCategories(pkg?.categories ?? []), [pkg])
 
@@ -108,6 +114,32 @@ export default function App({ onGoHome }) {
     }
   }, [current])
 
+  // "Tamamla" / "Düzenlenecek" / back to pending. Coming from pending, the next
+  // pending image opens, so the queue keeps moving; in the other groups the image
+  // stays open, so it can still be fixed.
+  const markStatus = useCallback(async (status) => {
+    if (!current || saving || current.status === status) return
+    const wasPending = current.status === 'pending'
+    setSaving(true)
+    setSaveError(null)
+    try {
+      const updated = await postStatus(current.image.id, status)
+      setDetail(updated)
+      const images = pkg.images.map((img) =>
+        img.id === updated.image.id
+          ? { ...img, status: updated.status, status_by: updated.status_by } : img)
+      setPkg((p) => ({ ...p, images }))
+      if (wasPending && status !== 'pending') {
+        const next = findNextPending(images, index)
+        if (next != null) setIndex(next)
+      }
+    } catch (err) {
+      setSaveError(err.message)
+    } finally {
+      setSaving(false)
+    }
+  }, [current, saving, pkg, index])
+
   const decide = useCallback((action, categoryId) => {
     if (!selected || saving) return
     if (action === 'accept' && ['accepted', 'changed', 'added'].includes(selected.state)) return
@@ -134,17 +166,19 @@ export default function App({ onGoHome }) {
   const closeExport = useCallback(() => setExportDialog(false), [])
 
   const fetchPreviewForFormat = useCallback((format) => {
+    if (format === 'edit') return fetchEditExportPreview()
     return format === 'yolo' ? fetchExportPreview() : fetchCOCOExportPreview()
   }, [])
 
   const runExportForFormat = useCallback((format) => {
+    if (format === 'edit') return postEditExport()
     return format === 'yolo' ? postExport() : postCOCOExport()
   }, [])
 
   const handleExportDone = useCallback((result, format) => {
-    const count = format === 'yolo'
-      ? `${result.images} resim, ${result.objects} nesne`
-      : `${result.images} resim, ${result.annotations} nesne`
+    const count = format === 'coco'
+      ? `${result.images} resim, ${result.annotations} nesne`
+      : `${result.images} resim, ${result.objects} nesne`
     setToast({ kind: 'success', text: `✓ Dışa aktarıldı: ${count} → ${result.path}` })
   }, [])
 
@@ -165,28 +199,30 @@ export default function App({ onGoHome }) {
       else if (e.key === 'Delete') decide('delete')
       else if (e.key === 'n' || e.key === 'N') go(1)
       else if (e.key === 'm' || e.key === 'M') setMaskView(nextMaskView)
+      else if (e.key === 't' || e.key === 'T') markStatus('reviewed')
+      else if (e.key === 'd' || e.key === 'D') markStatus('needs_edit')
       else return
       e.preventDefault()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [decide, go, clearSelection, exportDialog, closeExport])
+  }, [decide, go, markStatus, clearSelection, exportDialog, closeExport])
 
-  if (error) return <main className="app"><p className="error">Hata: {error}</p></main>
+  if (error) return <main className="app app-message"><p className="error">Hata: {error}</p></main>
   if (offline) {
     return (
-      <main className="app">
+      <main className="app app-message">
         <p className="error">Servise ulaşılamıyor. Servisi başlattın mı?</p>
         <code>.venv\Scripts\python server\server.py --package sample_package --reviewer tunahan</code>
         <p>Servis açılınca sayfa kendiliğinden yüklenecek.</p>
       </main>
     )
   }
-  if (!pkg) return <main className="app">Yükleniyor...</main>
+  if (!pkg) return <main className="app app-message">Yükleniyor...</main>
 
   return (
     <main className="app">
-      <Toolbar images={pkg.images} index={index} onGo={go}
+      <Toolbar images={pkg.images} index={index} onGo={go} canPrev={canPrev} canNext={canNext}
         nextPendingIndex={nextPendingIndex} onNextPending={() => setIndex(nextPendingIndex)}
         saving={saving} saveError={saveError} onExport={openExport}
         maskView={maskView} onMaskView={setMaskView} onGoHome={onGoHome} />
@@ -205,18 +241,32 @@ export default function App({ onGoHome }) {
             candidates={showCandidates ? candidates : null} view={maskView}
             selectedCandidateId={selectedCandidateId} onSelectCandidate={selectCandidate} />
           <aside className="sidebar">
+            <ImageStatusCard status={current.status} statusBy={current.status_by}
+              statusAt={current.status_at} editors={current.editors} reviewer={pkg.reviewer}
+              onSet={markStatus} saving={saving} />
             <SelectedPanel object={selected} reasons={selectedReasons} candidate={selectedCandidate}
               categories={pkg.categories} categoryNames={categoryNames}
               onDecide={decide} onAddCandidate={addCandidate} onCancel={clearSelection} saving={saving} />
-            <ObjectList items={orderedItems} categoryNames={categoryNames}
-              selectedId={selectedId} onSelect={selectObject}
-              threshold={threshold} onThreshold={setThreshold}
-              candidateCount={candidates.length} showCandidates={showCandidates}
-              onToggleCandidates={toggleCandidates} />
+            <div className="segmented panel-tabs" role="group" aria-label="Liste">
+              <button aria-pressed={sideTab === 'objects'} className={sideTab === 'objects' ? 'on' : ''}
+                onClick={() => setSideTab('objects')}>Nesneler</button>
+              <button aria-pressed={sideTab === 'images'} className={sideTab === 'images' ? 'on' : ''}
+                onClick={() => setSideTab('images')}>Resimler ({pkg.images.length})</button>
+            </div>
+            {sideTab === 'objects' ? (
+              <ObjectList items={orderedItems} categoryNames={categoryNames}
+                selectedId={selectedId} onSelect={selectObject}
+                threshold={threshold} onThreshold={setThreshold}
+                candidateCount={candidates.length} showCandidates={showCandidates}
+                onToggleCandidates={toggleCandidates} />
+            ) : (
+              <ImageList images={pkg.images} index={index} group={group} onGroup={setGroup}
+                onPick={setIndex} />
+            )}
           </aside>
         </div>
       ) : (
-        <p>Yükleniyor...</p>
+        <p className="app-message muted">Yükleniyor...</p>
       )}
     </main>
   )

@@ -47,6 +47,10 @@ cd ..
 
 ## 3. Aracı çalıştır
 
+**En kolayı (Windows): `baslat.bat` dosyasına çift tıkla.** İlk açılışta eksik kurulumları yapar, arayüzü derler, servisi başlatır ve tarayıcıyı açar. Kapatmak için açılan pencerede `Ctrl + C`. Mac / Linux: `./baslat.sh` (ilk seferde `chmod +x baslat.sh`). Kod güncellenince `baslat.bat yenile` arayüzü yeniden derler. Adın için: `baslat.bat --reviewer ayse`. Bu yolla aşağıdaki iki terminale gerek kalmaz, adres http://localhost:8000 olur.
+
+Geliştirme için iki terminalli yol:
+
 **İki terminal** gerekir: biri servis, biri arayüz. İkisi de `label-review-tool` klasöründe açılmalı.
 
 **Terminal 1, servis** (`--reviewer` yerine kendi adını yaz):
@@ -85,16 +89,22 @@ Her projenin kendi klasörü vardır. Başka bir yer istersen servise `--export 
 | Sınıfı düzelt | Sağ üstteki **Sınıf** listesinden seç |
 | Maske görünümü (dolu / kenar / gizli) | `M` |
 | Kaçırılan nesneyi ekle | **Adayları göster** → kesikli çizgili parçaya tıkla → sınıf seç |
+| Resmi bitir (eklenecek bir şey yok) | **Tamamla** ya da `T`; sıradaki bekleyen resim açılır |
+| Elle maske / etiket eklenecek (Roboflow) | **Düzenlenecek** ya da `D` |
+| Gruplara göre resim listesi | Sağdaki **Resimler** sekmesi: Tümü / Bekleyen / Tamamlanan / Düzenlenecek. Birine tıklayınca açılır, tekrar düzeltebilirsin |
 | Sonraki resim | `N` |
 | Seçimi bırak | `Esc` |
-| YOLO ya da COCO'ya aktar | Üstteki **Dışa aktar** → biçimi seç → penceredeki **Dışa aktar** |
+| YOLO ya da COCO'ya aktar (yalnızca tamamlananlar) | Üstteki **Dışa aktar** → biçimi seç → penceredeki **Dışa aktar** |
+| Düzenlenecekleri Roboflow'a götür | **Dışa aktar** → **Düzenlenecekler** → `<paket>_export_duzenlenecek` klasörünü yükle (resimler + `_annotations.coco.json`) |
 | Başka projeye geç | Sol üstteki **← Projeler** |
 
 Kararlar her işlemde `sample_package/reviews/` klasörüne kaydedilir. Sayfayı yenilesen de durur. Baştan başlamak için o klasörü sil.
 
 ## 5. Gerçek fotoğraflarla dene
 
-Gerçek paket (`bidvision_package.zip`) GitHub'da **yok**, çünkü müzayede fotoğrafları repoya konmuyor. Zip'i ekipten ayrıca al.
+**Notebook çalıştırmadan, hemen dene:** repoda `example_package` klasörü var. Bu, Kaggle hattının 5 gerçek fotoğraf için ürettiği hazır çıktıdır (etiketli nesneler, maskeler, adaylar). GPU ya da notebook gerekmez. Projeler sayfasında **+ Klasör ekle** de, klasör yolu olarak `label-review-tool\example_package` klasörünün tam yolunu, bir ad ve kendi adını yaz, **Ekle**, sonra **Aç**. Kararların `example_package\reviews\` içine yazılır ve git'e girmez.
+
+Tam gerçek paket (`bidvision_package.zip`) GitHub'da **yok**, çünkü müzayede fotoğrafları repoya konmuyor, yalnızca bu 5 fotoğraflık örnek var. Tam paketi ekipten ayrıca al.
 
 1. `label-review-tool` içinde `packages` adlı bir klasör oluştur.
 2. Zip'i `packages\bidvision_pilot` klasörüne aç. İçinde `annotations.json` ve `images\` olmalı.

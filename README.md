@@ -76,9 +76,11 @@ Tüm koordinatlar **piksel** cinsinden. Maske, çokgen noktalarının düz liste
 - `annotations`: hattın bulduğu nesneler.
 - `candidates`: hattın seçmediği ama SAM2'nin otomatik bulduğu parçalar. Etiketi yoktur.
 - Sınıf listesini koda gömme, her zaman `categories` içinden oku. Listede `unknown` adlı bir sınıf olabilir.
-- Gerçek paketi Gölge sonradan verecek. `make_sample_data.py` aynı biçimde sahte bir paket üretir, geliştirmeyi onunla yap.
+- Gerçek paketi ekip sonradan verecek. `make_sample_data.py` aynı biçimde sahte bir paket üretir, geliştirmeyi onunla yap.
 
 ### 5.2 Karar dosyası: `reviews/<resim_adı>.json`
+
+Kim ne yaptı kayıt altındadır: `log` satırlarındaki `by` o değişikliği yapanın adı, `status_by` / `status_at` resmi şu duruma (tamamlandı, düzenlenecek) kimin ve ne zaman getirdiği. `reviewer` yalnızca dosyayı en son kaydeden kişidir. Her dışa aktarma klasörüne `labelers.csv` yazılır (resim, durum, tamamlayan, tarih, düzenleyenler, değişiklik sayısı, son kayıt). Adların yazılmadığı eski kayıtlarda `status_by` yoktur, düzenleyen "(eski kayıt)" diye gösterilir.
 
 Resim başına bir dosya. Kullanıcı bir şey değiştirdikçe güncellenir.
 
@@ -101,7 +103,7 @@ Resim başına bir dosya. Kullanıcı bir şey değiştirdikçe güncellenir.
 }
 ```
 
-- `status`: `pending` (bekliyor) ya da `reviewed` (incelendi).
+- `status`: `pending` (bekliyor), `reviewed` (tamamlandı, YOLO/COCO dışa aktarmaya girer) ya da `needs_edit` (düzenlenecek: Roboflow gibi bir araçta elle maske/etiket eklenecek, ayrı `<paket>_export_duzenlenecek` klasörüne gider). Nesne kararları durumu değiştirmez, yalnızca "Tamamla" / "Düzenlenecek" düğmeleri değiştirir.
 - `state`: `auto` (dokunulmadı), `accepted`, `changed`, `deleted`, `added`.
 - `log` değişiklik geçmişidir, geri almak için kullanılır.
 - Resim hiç incelenmediyse dosya yoktur ve durum `pending`'dir.
@@ -123,7 +125,7 @@ Resim başına bir dosya. Kullanıcı bir şey değiştirdikçe güncellenir.
 - **İşlem:** Seçili nesne için üç düğme: Onayla, Sınıfı değiştir (açılır liste), Sil. Klavye kısayolları olsun (örn. `Enter` onayla, `Del` sil, `N` sonraki resim).
 - **Şüpheliler:** Güven skoru eşiğin altında olanlar ve sınıfı `unknown` olanlar listenin başında, "şüpheli" rozetiyle. Eşik arayüzde bir kaydırıcı, varsayılan 0,5.
 - **Aday maskeler:** Bir düğmeyle açılır/kapanır. Açılınca resim üstünde adaylar çizgiyle görünür. Birine tıklayınca sınıf seçtirilir ve listeye yeni nesne olarak eklenir.
-- **Resim durumu:** İşlem yapılan resim otomatik "incelendi" olur. "Sıradaki bekleyen" düğmesi bekleyen ilk resme atlar.
+- **Resim durumu:** Her resim bekliyor, tamamlandı ya da düzenlenecek durumundadır. Nesne kararları anında kaydedilir ama durumu değiştirmez; **Tamamla** (`T`) ve **Düzenlenecek** (`D`) düğmeleri değiştirir ve sıradaki bekleyen resme geçer. Sağdaki **Resimler** sekmesinde gruplar (Tümü / Bekleyen / Tamamlanan / Düzenlenecek) küçük resimli liste olarak görünür; hangi grupta olursa olsun bir resim açılıp yeniden düzeltilebilir. "Sıradaki bekleyen" düğmesi bekleyen ilk resme atlar.
 - **Her işlem anında kaydedilir.** Sayfa kapanıp açılınca kararlar yerinde olmalı.
 
 ## 8. Dışa aktarma (YOLO-seg)
@@ -141,7 +143,7 @@ Sadece `reviewed` resimler, silinen nesneler hariç. Her resim için `export/lab
 
 ## 9. Adımlar
 
-Her adımı bitirince çalıştığını kontrol et ve Gölge'ye göster, sonra sonrakine geç. Her adım küçük tutuldu. Takılırsan Gölge'ye yaz.
+Her adımı bitirince çalıştığını kontrol et ve ekibe göster, sonra sonrakine geç. Her adım küçük tutuldu. Takılırsan ekibe yaz.
 
 | Adım | İş | Bitti sayılır |
 |---|---|---|
@@ -156,7 +158,7 @@ Her adımı bitirince çalıştığını kontrol et ve Gölge'ye göster, sonra 
 | 8 | Aday maskeler: göster, tıkla, sınıf ver, ekle | Yeni nesne listeye eklenip kaydediliyor ve dışa aktarmaya giriyor |
 | 9 | (İsteğe bağlı, sonraya) | — |
 
-Önerilen kontrol: adım 2'den sonra, adım 4'ten sonra ve adım 7'den sonra Gölge'ye ekran görüntüsü at.
+Önerilen kontrol: adım 2'den sonra, adım 4'ten sonra ve adım 7'den sonra ekibe ekran görüntüsü at.
 
 ## 10. Yapay zekâ asistanı için notlar
 

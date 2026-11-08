@@ -18,6 +18,18 @@ function SplitTable({ splits }) {
   )
 }
 
+// Images that are not "tamamlandı" stay out of the YOLO and COCO exports.
+function NotDoneNote({ summary, done }) {
+  if (!(summary.pending_images > 0)) return null
+  const marked = summary.needs_edit_images ?? 0
+  return (
+    <p className="note">
+      {summary.pending_images} resim henüz tamamlanmadı{marked > 0 && <> ({marked} tanesi düzenlenecek)</>},{' '}
+      {done ? 'aktarılmadı' : 'aktarılmayacak'}.
+    </p>
+  )
+}
+
 // ExportDialog manages its own loading/done/exporting state.
 // Props: onFetchPreview(format), onRunExport(format), onDone(result, format), onClose
 export default function ExportDialog({ onFetchPreview, onRunExport, onDone, onClose }) {
@@ -72,7 +84,7 @@ export default function ExportDialog({ onFetchPreview, onRunExport, onDone, onCl
   const handleClose = () => { if (!exporting) onClose() }
 
   const empty = summary?.images === 0
-  const formatLabel = format === 'yolo' ? 'YOLO-seg' : 'COCO JSON'
+  const formatLabel = { yolo: 'YOLO-seg', coco: 'COCO JSON', edit: 'düzenlenecekler' }[format]
 
   return (
     <div className="dialog-backdrop" onClick={handleClose}>
@@ -90,6 +102,8 @@ export default function ExportDialog({ onFetchPreview, onRunExport, onDone, onCl
               onClick={() => handleFormatChange('yolo')}>YOLO-seg</button>
             <button aria-pressed={format === 'coco'} className={format === 'coco' ? 'on' : ''}
               onClick={() => handleFormatChange('coco')}>COCO JSON</button>
+            <button aria-pressed={format === 'edit'} className={format === 'edit' ? 'on' : ''}
+              onClick={() => handleFormatChange('edit')}>Düzenlenecekler</button>
           </div>
         )}
 
@@ -106,12 +120,7 @@ export default function ExportDialog({ onFetchPreview, onRunExport, onDone, onCl
                   {summary.empty_images > 0 && <> · {summary.empty_images} resim nesnesiz</>}
                 </p>
                 <p className="muted path">{summary.path}</p>
-                {summary.pending_images > 0 && (
-                  <p className="note">
-                    {summary.pending_images} resim henüz incelenmedi,{' '}
-                    {done ? 'aktarılmadı' : 'aktarılmayacak'}.
-                  </p>
-                )}
+                <NotDoneNote summary={summary} done={done} />
                 {summary.untouched_objects > 0 && (
                   <p className="note warn">
                     {summary.untouched_objects} nesneye hiç dokunulmadı; hattın verdiği hâliyle{' '}
@@ -129,22 +138,30 @@ export default function ExportDialog({ onFetchPreview, onRunExport, onDone, onCl
                   </tbody>
                 </table>
               </>
-            ) : (
+            ) : format === 'coco' ? (
               <>
                 <p>
                   {done ? 'Yazıldı' : 'Yazılacak'}: <b>{summary.images}</b> resim,{' '}
                   <b>{summary.annotations}</b> nesne
                 </p>
                 <p className="muted path">{summary.path}</p>
-                {summary.pending_images > 0 && (
-                  <p className="note">
-                    {summary.pending_images} resim henüz incelenmedi,{' '}
-                    {done ? 'aktarılmadı' : 'aktarılmayacak'}.
-                  </p>
-                )}
+                <NotDoneNote summary={summary} done={done} />
+              </>
+            ) : (
+              <>
+                <p>
+                  {done ? 'Yazıldı' : 'Yazılacak'}: <b>{summary.images}</b> resim,{' '}
+                  <b>{summary.objects}</b> nesne
+                  {summary.empty_images > 0 && <> · {summary.empty_images} resim nesnesiz</>}
+                </p>
+                <p className="muted path">{summary.path}</p>
+                <p className="note">
+                  Düzenlenecek diye işaretlediğin resimler ve şimdiki maskeleri, tek klasörde COCO
+                  dosyasıyla (<code>_annotations.coco.json</code>). Roboflow&apos;a bu klasörü yükle.
+                </p>
               </>
             )}
-            {summary.splits && <SplitTable splits={summary.splits} />}
+            {format !== 'edit' && summary.splits && <SplitTable splits={summary.splits} />}
             {summary.warnings?.length > 0 && (
               <>
                 <p><b>Uyarılar ({summary.warnings.length})</b></p>
@@ -165,7 +182,11 @@ export default function ExportDialog({ onFetchPreview, onRunExport, onDone, onCl
             </button>
           )}
         </div>
-        {empty && <p className="muted">Aktarılacak incelenmiş resim yok.</p>}
+        {empty && (
+          <p className="muted">
+            {format === 'edit' ? 'Düzenlenecek olarak işaretlenmiş resim yok.' : 'Aktarılacak tamamlanmış resim yok.'}
+          </p>
+        )}
       </div>
     </div>
   )

@@ -7,6 +7,7 @@ one polygon is invalid and one image has a wrong size in annotations.json.
 Usage (from the project folder, after make_sample_data.py):
     .venv\\Scripts\\python server\\test_exporter.py
 """
+import csv
 import filecmp
 import json
 import shutil
@@ -15,7 +16,10 @@ import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
+import coco_exporter  # noqa: E402
+import edit_exporter  # noqa: E402
 import exporter  # noqa: E402
+import labelers  # noqa: E402
 from package import Package  # noqa: E402
 from review_store import ReviewStore  # noqa: E402
 
@@ -100,6 +104,7 @@ def test_unit_split_export(tmp):
     store = ReviewStore(pkg, "tester")
     for img in images:
         store.apply(img["id"], img["id"], "accept")
+        store.set_status(img["id"], "reviewed")
 
     s = exporter.export(pkg, store, tmp / "units_export")
     out = tmp / "units_export"
@@ -124,7 +129,11 @@ def test_unit_split_export(tmp):
 
     c = coco_exporter.export_coco(pkg, store, tmp / "units_coco")
     files = sorted(p.name for p in (tmp / "units_coco").iterdir())
-    check(f"COCO: one file per set ({files})", files == ["instances_test.json", "instances_train.json", "instances_val.json"])
+    check(f"COCO: one file per set, plus the labelers table ({files})",
+          files == ["instances_test.json", "instances_train.json", "instances_val.json", "labelers.csv"])
+    table = (tmp / "units_coco" / "labelers.csv").read_text(encoding="utf-8-sig").splitlines()
+    check("labelers.csv: header and one row per exported photo",
+          table[0] == ",".join(labelers.COLUMNS) and len(table) == 1 + len(images))
     coco_names = {sp: sorted(i["file_name"] for i in json.loads(
         (tmp / "units_coco" / f"instances_{sp}.json").read_text(encoding="utf-8"))["images"]) for sp in on_disk}
     check("COCO sets hold the same photos as YOLO sets", coco_names == on_disk)
@@ -164,6 +173,8 @@ def run(tmp):
     store.apply(1, action="add", candidate_id=added_cand["id"], category_id=added_cat)    # new-1, kept
     store.apply(1, action="add", candidate_id=removed_cand["id"], category_id=added_cat)  # new-2
     store.apply(1, "new-2", "delete")                                                       # removed again
+    store.set_status(1, "reviewed")  # "Tamamla" on img_001 and img_002; img_003 stays pending
+    store.set_status(2, "reviewed")
 
     p = exporter.preview(pkg, store, out)
     check("preview writes nothing", not out.exists() and not (tmp / "export.tmp").exists())
@@ -244,6 +255,54 @@ def run(tmp):
     exporter.export(pkg, store, out)
     check("re-export drops files of images no longer reviewed",
           not (out / "labels" / "train" / "img_002.txt").exists() and not (out / "images" / "train" / "img_002.jpg").exists())
+
+    # --- images marked "needs editing" ---
+    store.set_status(2, "reviewed")
+    store.set_status(3, "needs_edit")
+    store.apply(3, pkg.annotations[3][0]["id"], "delete")  # a deleted object must stay out of the edit export
+    s2 = exporter.export(pkg, store, out)
+    check("needs_edit image is not in the YOLO export",
+          sorted(p.name for p in (out / "images" / "train").iterdir()) == ["img_001.jpg", "img_002.jpg"])
+    check("needs_edit counted separately, still part of 'not done'",
+          s2["needs_edit_images"] == 1 and s2["pending_images"] == 1)
+    check("COCO summary counts it too", coco_exporter.preview_coco(pkg, store, tmp / "c")["needs_edit_images"] == 1)
+
+    edit_out = tmp / "export_duzenlenecek"
+    pv = edit_exporter.preview(pkg, store, edit_out)
+    check("edit preview writes nothing", not edit_out.exists())
+    ev = edit_exporter.export(pkg, store, edit_out)
+    check("edit preview numbers equal the real export", pv == ev)
+    check("edit folder holds the photo and the COCO file",
+          sorted(p.name for p in edit_out.iterdir() if p.name != exporter.MARKER)
+          == ["_annotations.coco.json", "img_003.jpg", "labelers.csv"])
+    rows = list(csv.DictReader((edit_out / "labelers.csv").read_text(encoding="utf-8-sig").splitlines()))
+    check("edit export: labelers.csv names who marked the photo",
+          [(r["image"], r["status"], r["status_by"]) for r in rows] == [("img_003.jpg", "needs_edit", "tester")]
+          and rows[0]["editors"] == "tester" and rows[0]["changes"] == "1")
+    yolo_rows = list(csv.DictReader((out / "labelers.csv").read_text(encoding="utf-8-sig").splitlines()))
+    check("YOLO export: labelers.csv holds the exported photos only",
+          sorted(r["image"] for r in yolo_rows) == ["img_001.jpg", "img_002.jpg"]
+          and all(r["status"] == "reviewed" and r["status_by"] == "tester" for r in yolo_rows))
+    check("labelers.csv opens in Excel with Turkish letters (BOM)",
+          (out / "labelers.csv").read_bytes().startswith(b"\xef\xbb\xbf"))
+    coco = json.loads((edit_out / "_annotations.coco.json").read_text(encoding="utf-8"))
+    kept3 = len(pkg.annotations[3]) - 1
+    check("COCO: one image, deleted object left out, bbox and area present",
+          [i["file_name"] for i in coco["images"]] == ["img_003.jpg"] and len(coco["annotations"]) == kept3
+          and all(a["bbox"] and a["area"] > 0 and a["image_id"] == 3 for a in coco["annotations"]))
+    check("COCO: categories like the package", [c["name"] for c in coco["categories"]] == [c["name"] for c in pkg.categories])
+    check("edit summary counts", ev["images"] == 1 and ev["objects"] == kept3 and ev["empty_images"] == 0)
+    check("photo copied byte for byte", filecmp.cmp(edit_out / "img_003.jpg", tmp / "pkg" / "images" / "img_003.jpg", shallow=False))
+    store.set_status(3, "reviewed")
+    ev = edit_exporter.export(pkg, store, edit_out)
+    check("re-export with nothing marked leaves an empty folder, no stale photo",
+          ev["images"] == 0 and not (edit_out / "img_003.jpg").exists())
+    try:
+        edit_exporter.export(pkg, store, tmp / "pkg")
+        check("edit export refuses a folder it did not create", False)
+    except exporter.ExportError:
+        check("edit export refuses a folder it did not create", (tmp / "pkg" / "annotations.json").exists())
+    store.set_status(3, "pending")
 
     # --- safety ---
     foreign = tmp / "not_ours"

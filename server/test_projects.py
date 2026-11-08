@@ -140,6 +140,85 @@ def test_export_folders(tmp):
           and Path(coco.json()["path"]).exists())
 
 
+def test_image_states_api(tmp):
+    c = fresh(tmp)
+    p = c.post("/api/projects", headers=TOOL, json={"name": "S", "path": str(copy_sample(tmp, "pkgS")), "reviewer": "t"}).json()
+    c.post(f"/api/projects/{p['id']}/activate", headers=TOOL)
+
+    r = c.post("/api/images/1/review", headers=TOOL, json={"ann_id": 1, "action": "accept"})
+    check("a decision alone leaves the image pending", r.json()["status"] == "pending")
+    r = c.post("/api/images/1/status", headers=TOOL, json={"status": "reviewed"})
+    check("POST status: reviewed", r.status_code == 200 and r.json()["status"] == "reviewed")
+    r = c.post("/api/images/2/status", headers=TOOL, json={"status": "needs_edit"})
+    check("POST status: needs_edit", r.status_code == 200 and r.json()["status"] == "needs_edit")
+    r = c.post("/api/images/2/status", headers=TOOL, json={"status": "nope"})
+    check(f"POST status: unknown value refused (HTTP {r.status_code})", r.status_code == 400)
+    r = c.post("/api/images/999/status", headers=TOOL, json={"status": "reviewed"})
+    check("POST status: unknown image 404", r.status_code == 404)
+    r = c.post("/api/images/1/status", json={"status": "pending"})
+    check("POST status without our header refused", r.status_code == 403)
+    pkg = {i["id"]: i["status"] for i in c.get("/api/package").json()["images"]}
+    check("package list shows the three states", pkg == {1: "reviewed", 2: "needs_edit", 3: "pending"})
+    prog = next(x for x in c.get("/api/projects").json() if x["id"] == p["id"])["progress"]
+    check("project progress counts done and needs_edit", prog == {"reviewed": 1, "needs_edit": 1, "total": 3})
+
+    r = c.post("/api/images/2/review", headers=TOOL, json={"ann_id": 6, "action": "accept"})
+    check("editing a needs_edit image keeps it there", r.json()["status"] == "needs_edit")
+
+    # --- who did it ---
+    d = c.get("/api/images/1").json()
+    check("image detail: who finished it, when, and who edited",
+          d["status_by"] == "t" and d["status_at"] and d["editors"] == ["t"])
+    check("image detail: untouched image has no names",
+          c.get("/api/images/3").json()["status_by"] is None and c.get("/api/images/3").json()["editors"] == [])
+    pk = c.get("/api/package").json()
+    check("package list carries each image's person and the reviewer's own name",
+          pk["reviewer"] == "t" and {i["id"]: i["status_by"] for i in pk["images"]} == {1: "t", 2: "t", 3: None})
+    lab = c.get("/api/labelers").json()
+    check("labelers table: header and one row per image",
+          lab["columns"][:3] == ["image", "status", "status_by"] and len(lab["rows"]) == 3
+          and lab["rows"][0]["image"] == "img_001.jpg" and lab["rows"][0]["status"] == "reviewed")
+
+    pv = c.get("/api/export/edit/preview").json()
+    check("edit preview: the one marked image", pv["images"] == 1 and pv["path"].endswith("_duzenlenecek"))
+    ex = c.post("/api/export/edit", headers=TOOL)
+    out = Path(ex.json()["path"])
+    check("edit export written", ex.status_code == 200 and (out / "_annotations.coco.json").exists()
+          and (out / "img_002.jpg").exists())
+    r = c.post("/api/export/edit")
+    check("edit export without our header refused", r.status_code == 403)
+
+    t = c.get("/api/images/1/thumb")
+    check("thumbnail is a small JPEG", t.status_code == 200 and t.headers["content-type"] == "image/jpeg"
+          and max(Image.open(io.BytesIO(t.content)).size) <= 240)
+    again = c.get("/api/images/1/thumb", headers={"If-None-Match": t.headers["etag"]})
+    check("thumbnail answers 304 when unchanged", again.status_code == 304)
+    check("thumbnail of unknown image 404", c.get("/api/images/999/thumb").status_code == 404)
+
+
+def test_serves_built_web(tmp):
+    from fastapi import FastAPI
+    dist = tmp / "dist"
+    (dist / "assets").mkdir(parents=True)
+    (dist / "index.html").write_text("<!doctype html><title>page</title>", encoding="utf-8")
+    (dist / "assets" / "app.js").write_text("console.log(1)", encoding="utf-8")
+    other = FastAPI()
+
+    @other.get("/api/ping")
+    def ping():
+        return {"ok": True}
+
+    check("no web/dist -> nothing mounted", server.mount_web(tmp / "missing", other) is False)
+    check("web/dist present -> mounted", server.mount_web(dist, other) is True)
+    c = TestClient(other, base_url="http://127.0.0.1:8000")
+    check("page served at /", "<title>page</title>" in c.get("/").text)
+    check("assets served", c.get("/assets/app.js").status_code == 200)
+    check("api routes are not shadowed by the page", c.get("/api/ping").json() == {"ok": True})
+    check("files outside dist are not reachable", c.get("/..%2fsecret.txt").status_code in (400, 404))
+    check("the real app does not serve files unless asked (mount happens in main)",
+          not any(getattr(r, "name", "") == "web" for r in server.app.routes))
+
+
 def test_cli_package_updates(tmp):
     fresh(tmp)
     pkg = copy_sample(tmp, "cli")
@@ -160,7 +239,8 @@ def main():
     tmp = Path(tempfile.mkdtemp())
     try:
         for t in (test_upload_safety, test_upload_exif, test_upload_annotations_must_match,
-                  test_cross_site_requests, test_export_folders, test_cli_package_updates):
+                  test_cross_site_requests, test_export_folders, test_image_states_api,
+                  test_serves_built_web, test_cli_package_updates):
             sub = tmp / t.__name__
             sub.mkdir()
             try:

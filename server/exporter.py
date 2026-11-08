@@ -4,6 +4,7 @@ export/
   images/{train,val,test}/<file>     copied images
   labels/{train,val,test}/<stem>.txt one line per object: <class_index> x1 y1 x2 y2 ... (0-1)
   data.yaml                          set folders + class names, same order as package categories
+  labelers.csv                       who finished / changed each photo (see labelers.py)
 """
 import json
 import shutil
@@ -11,6 +12,7 @@ from pathlib import Path
 
 from PIL import Image
 
+import labelers
 import splits
 from package import merge_objects
 
@@ -126,7 +128,7 @@ def plan(pkg, store):
     # counted by class index, not name: two categories could share a name
     per_class = [0] * len(pkg.categories)
     summary = {"images": 0, "objects": 0, "empty_images": 0, "untouched_objects": 0,
-               "pending_images": 0, "warnings": []}
+               "pending_images": 0, "needs_edit_images": 0, "warnings": []}
     warn = summary["warnings"].append
     files = []
 
@@ -136,7 +138,8 @@ def plan(pkg, store):
 
     for image_id, img in pkg.images.items():
         if image_id not in split_by_image:
-            summary["pending_images"] += 1
+            summary["pending_images"] += 1  # everything not done, needs_edit included
+            summary["needs_edit_images"] += store.status(image_id) == "needs_edit"
             continue
         split = split_by_image[image_id]
         name, width, height = img["file_name"], img["width"], img["height"]
@@ -206,6 +209,10 @@ def build(pkg, store, out_dir):
         (out_dir / "labels" / split / f"{Path(name).stem}.txt").write_text(
             "".join(line + "\n" for line in lines), encoding="utf-8")
         shutil.copy2(src, out_dir / "images" / split / name)
+    # who finished / changed each photo in this dataset
+    names = {name for _, name, _, _ in files}
+    ids = [i for i, img in pkg.images.items() if img["file_name"] in names]
+    (out_dir / "labelers.csv").write_text(labelers.to_csv(labelers.rows(pkg, store, ids)), encoding="utf-8")
     return summary
 
 
@@ -217,8 +224,14 @@ def preview(pkg, store, target):
 
 
 def export(pkg, store, target):
-    """Build into a temp folder, then swap it in, so a failed export never
-    leaves a half-written dataset and old files never linger."""
+    return swap_in(target, lambda tmp: build(pkg, store, tmp))
+
+
+def swap_in(target, build_into):
+    """build_into(tmp) writes a whole folder (carrying MARKER) and returns a summary.
+    It is built next to the target, then swapped in, so a failed export never
+    leaves a half-written dataset and old files never linger. Shared by the YOLO
+    and the "needs editing" exports."""
     target = Path(target).resolve()
     if target.exists() and any(target.iterdir()) and not (target / MARKER).exists():
         raise ExportError(f"{target} bu aracın oluşturduğu bir klasör değil, üzerine yazılmadı")
@@ -230,7 +243,7 @@ def export(pkg, store, target):
             shutil.rmtree(leftover)
 
     try:
-        summary = build(pkg, store, tmp)
+        summary = build_into(tmp)
     except Exception:
         shutil.rmtree(tmp, ignore_errors=True)
         raise

@@ -10,6 +10,7 @@ import os
 from datetime import datetime
 from pathlib import Path
 
+import labelers
 import splits
 from package import bbox_of, merge_objects
 
@@ -59,7 +60,8 @@ def build_coco(pkg, store):
     summary = {
         "images": len(reviewed),
         "annotations": ann_id - 1,
-        "pending_images": len(pkg.images) - len(reviewed),
+        "pending_images": len(pkg.images) - len(reviewed),  # everything not done, needs_edit included
+        "needs_edit_images": sum(1 for i in pkg.images if store.status(i) == "needs_edit"),
         "splits": {s: {"images": len(sets[s]["images"]), "objects": len(sets[s]["annotations"]),
                        "units": units_per_split[s]} for s in splits.SPLITS},
         "warnings": warnings,
@@ -88,5 +90,7 @@ def export_coco(pkg, store, target):
             os.replace(tmp, out)
         elif out.exists():
             out.unlink()
+    included = [img["id"] for c in sets.values() for img in c["images"]]
+    (out_dir / "labelers.csv").write_text(labelers.to_csv(labelers.rows(pkg, store, included)), encoding="utf-8")
     summary["path"] = str(out_dir)
     return summary

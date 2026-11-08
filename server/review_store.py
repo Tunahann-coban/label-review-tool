@@ -7,6 +7,13 @@ from pathlib import Path
 
 ACTIONS = ("accept", "change", "delete", "add")
 
+# Image states. "reviewed" is shown as "tamamlandı" (done); it keeps its old name so
+# review files written before "needs_edit" existed still mean the same thing.
+#   pending     not decided yet (also: decisions saved but "Tamamla" not pressed)
+#   reviewed    the reviewer pressed "Tamamla": goes to the YOLO / COCO export
+#   needs_edit  marked for manual work elsewhere (Roboflow): goes to the edit export
+STATUSES = ("pending", "reviewed", "needs_edit")
+
 
 def now():
     return datetime.now().isoformat(timespec="seconds")
@@ -71,6 +78,10 @@ class ReviewStore:
 
         with self.lock:
             review = self.load(image_id) or {"image_id": image_id, "objects": [], "log": []}
+            # Editing never changes the image state: only set_status does. A reviewed or
+            # needs_edit image stays where it is while the reviewer keeps fixing it.
+            status = review.get("status", "pending")
+            status_by, status_at = review.get("status_by"), review.get("status_at")
             entries = {o["ann_id"]: o for o in review["objects"]}
 
             if action == "add":
@@ -87,11 +98,44 @@ class ReviewStore:
             # same field order as the README example, easier to read by hand
             review = {
                 "image_id": image_id,
-                "status": "reviewed",
+                "status": status,
                 "reviewer": self.reviewer,
                 "updated": now(),
+                **self._status_fields(status_by, status_at),
                 "objects": list(entries.values()),
-                "log": review["log"] + [{"t": now(), "ann_id": ann_id, **log, "prev": prev}],
+                # "by": who made this change (the reviewer's name at that moment)
+                "log": review["log"] + [{"t": now(), "by": self.reviewer, "ann_id": ann_id, **log,
+                                         "prev": prev}],
+            }
+            self._write(image_id, review)
+            return review
+
+    @staticmethod
+    def _status_fields(by, at):
+        """Who last moved the image to its current state, and when. Absent on files
+        written before names were kept; those are left as they are."""
+        return {"status_by": by, "status_at": at} if by else {}
+
+    def set_status(self, image_id, status):
+        """Move the image to another state ("Tamamla", "Düzenlenecek", back to pending).
+        Decisions on its objects are kept. Returns the review (None if nothing to write)."""
+        if status not in STATUSES:
+            raise ReviewError(f"unknown status: {status}")
+        with self.lock:
+            review = self.load(image_id)
+            before = review.get("status", "pending") if review else "pending"
+            if before == status:
+                return review
+            review = review or {"image_id": image_id, "objects": [], "log": []}
+            review = {
+                "image_id": image_id,
+                "status": status,
+                "reviewer": self.reviewer,
+                "updated": now(),
+                **self._status_fields(self.reviewer, now()),
+                "objects": review["objects"],
+                "log": review["log"] + [{"t": now(), "by": self.reviewer, "action": "status",
+                                         "from": before, "to": status}],
             }
             self._write(image_id, review)
             return review
