@@ -32,3 +32,6 @@ projects/
 # Default export folders (<package>_export, <package>_export_coco)
 *_export/
 *_export_coco/
+
+# Decisions made while trying the example package (machine-specific)
+example_package/reviews/
