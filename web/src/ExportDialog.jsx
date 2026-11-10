@@ -18,21 +18,46 @@ function SplitTable({ splits }) {
   )
 }
 
-// Images that are not "tamamlandı" stay out of the YOLO and COCO exports.
-function NotDoneNote({ summary, done }) {
-  if (!(summary.pending_images > 0)) return null
-  const marked = summary.needs_edit_images ?? 0
+// Where it goes. Every export is a NEW folder named with the date and time, so an earlier
+// export is never overwritten or emptied.
+function Destination({ summary, done }) {
   return (
-    <p className="note">
-      {summary.pending_images} resim henüz tamamlanmadı{marked > 0 && <> ({marked} tanesi düzenlenecek)</>},{' '}
-      {done ? 'aktarılmadı' : 'aktarılmayacak'}.
-    </p>
+    <>
+      <p className="muted path">{done ? 'Yazıldı: ' : 'Yeni klasör oluşturulacak: '}{summary.path}</p>
+      {!done && <p className="muted">Önceki dışa aktarmalar silinmez, üzerine yazılmaz. Gün ve saat klasör adına eklenir.</p>}
+    </>
   )
 }
 
+// Images that are not in this YOLO / COCO export, with the reason, so nothing is left
+// out unseen: not finished yet, or on the edit list (their labels are incomplete, they have
+// an export of their own).
+function LeftOut({ summary, done, onOpenImage }) {
+  const list = summary.left_out ?? []
+  if (list.length === 0) return null
+  return (
+    <div className="left-out">
+      <p>
+        <b>{done ? 'Dışarıda kalan' : 'Dışarıda kalacak'} resimler ({list.length})</b>
+        <span className="muted"> · tıklayınca o resme gidersin</span>
+      </p>
+      <ul className="left-out-list">
+        {list.map((item) => (
+          <li key={item.id}>
+            <button className="link" onClick={() => onOpenImage?.(item.file_name)}>{item.file_name}</button>
+            <span className="reasons">
+              {item.unfinished && <span className="status status-pending">tamamlanmadı</span>}
+              {item.needs_edit && <span className="flag-chip">⚑ düzenlenecekler listesinde</span>}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  )
+}
 // ExportDialog manages its own loading/done/exporting state.
-// Props: onFetchPreview(format), onRunExport(format), onDone(result, format), onClose
-export default function ExportDialog({ onFetchPreview, onRunExport, onDone, onClose }) {
+// Props: onFetchPreview(format), onRunExport(format), onDone(result, format), onOpenImage(fileName), onClose
+export default function ExportDialog({ onFetchPreview, onRunExport, onDone, onOpenImage, onClose }) {
   const exportButton = useRef(null)
   const [format, setFormat] = useState('yolo')
   const [summary, setSummary] = useState(null)
@@ -119,8 +144,8 @@ export default function ExportDialog({ onFetchPreview, onRunExport, onDone, onCl
                   <b>{summary.objects}</b> nesne
                   {summary.empty_images > 0 && <> · {summary.empty_images} resim nesnesiz</>}
                 </p>
-                <p className="muted path">{summary.path}</p>
-                <NotDoneNote summary={summary} done={done} />
+                <Destination summary={summary} done={done} />
+                <LeftOut summary={summary} done={done} onOpenImage={onOpenImage} />
                 {summary.untouched_objects > 0 && (
                   <p className="note warn">
                     {summary.untouched_objects} nesneye hiç dokunulmadı; hattın verdiği hâliyle{' '}
@@ -144,8 +169,8 @@ export default function ExportDialog({ onFetchPreview, onRunExport, onDone, onCl
                   {done ? 'Yazıldı' : 'Yazılacak'}: <b>{summary.images}</b> resim,{' '}
                   <b>{summary.annotations}</b> nesne
                 </p>
-                <p className="muted path">{summary.path}</p>
-                <NotDoneNote summary={summary} done={done} />
+                <Destination summary={summary} done={done} />
+                <LeftOut summary={summary} done={done} onOpenImage={onOpenImage} />
               </>
             ) : (
               <>
@@ -154,9 +179,9 @@ export default function ExportDialog({ onFetchPreview, onRunExport, onDone, onCl
                   <b>{summary.objects}</b> nesne
                   {summary.empty_images > 0 && <> · {summary.empty_images} resim nesnesiz</>}
                 </p>
-                <p className="muted path">{summary.path}</p>
+                <Destination summary={summary} done={done} />
                 <p className="note">
-                  Düzenlenecek diye işaretlediğin resimler ve şimdiki maskeleri, tek klasörde COCO
+                  Düzenlenecekler listesine eklediğin resimler (bitmiş olsun olmasın) ve şimdiki maskeleri, tek klasörde COCO
                   dosyasıyla (<code>_annotations.coco.json</code>). Roboflow&apos;a bu klasörü yükle.
                 </p>
               </>

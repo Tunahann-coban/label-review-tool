@@ -1,25 +1,19 @@
 import { MASK_VIEWS } from './maskView'
-import { IMAGE_STATUS_LABELS } from './states'
 
-// Top bar: navigation, mask view, image status, progress and save feedback.
-// Three groups (navigation | file | progress and export); the buttons come first
-// so they never move when the file name length changes.
-export default function Toolbar({ images, index, onGo, canPrev, canNext, onNextPending, nextPendingIndex,
-  saving, saveError, onExport, maskView, onMaskView, onGoHome }) {
+// Top bar: only what concerns the whole project, so it stays short: the way back to the
+// projects page, how masks are drawn, overall progress and the export. Moving between
+// photos is in the bar above the photo (ImageNav).
+export default function Toolbar({ images, saving, saveError, onExport, maskView, onMaskView, onGoHome }) {
   const total = images.length
   const reviewed = images.filter((img) => img.status === 'reviewed').length
-  const needsEdit = images.filter((img) => img.status === 'needs_edit').length
-  const current = images[index]
+  const needsEdit = images.filter((img) => img.needs_edit).length
   const done = reviewed === total
   const summary = `${reviewed} / ${total} tamamlandı${needsEdit > 0 ? ` · ${needsEdit} düzenlenecek` : ''}`
 
   return (
     <header className="toolbar">
       <div className="toolbar-group">
-        {onGoHome && <button className="ghost" onClick={onGoHome} title="Ana sayfa">← Projeler</button>}
-        <button onClick={() => onGo(-1)} disabled={!canPrev}>← Önceki</button>
-        <button onClick={() => onGo(1)} disabled={!canNext}>Sonraki → <kbd>N</kbd></button>
-        <button onClick={onNextPending} disabled={nextPendingIndex == null}>Sıradaki bekleyen</button>
+        {onGoHome && <button className="primary" onClick={onGoHome} title="Proje listesine dön">← Projeler</button>}
       </div>
 
       <div className="segmented" role="group" aria-label="Maske görünümü">
@@ -28,13 +22,6 @@ export default function Toolbar({ images, index, onGo, canPrev, canNext, onNextP
           <button key={v.id} aria-pressed={maskView === v.id} className={maskView === v.id ? 'on' : ''}
             onClick={() => onMaskView(v.id)}>{v.label}</button>
         ))}
-      </div>
-
-      <div className="toolbar-group toolbar-file">
-        <span className={`status status-${current.status}`}>{IMAGE_STATUS_LABELS[current.status]}</span>
-        <span className="position" title={current.file_name}>
-          <span className="count">{index + 1} / {total}</span>{current.file_name}
-        </span>
       </div>
 
       <div className="toolbar-group toolbar-end">

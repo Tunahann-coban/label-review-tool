@@ -12,7 +12,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 import labelers  # noqa: E402
 from package import Package, merge_objects  # noqa: E402
-from review_store import ReviewError, ReviewStore  # noqa: E402
+from review_store import MARK_FIELDS, ReviewError, ReviewStore  # noqa: E402
 
 SOURCE = Path(__file__).parent.parent / "sample_package"
 failures = 0
@@ -148,13 +148,41 @@ def run(root):
     log_before = len(store.load(1)["log"])
     store.set_status(1, "reviewed")
     r = store.load(1)
-    check("Tamamla -> reviewed, decisions kept", store.status(1) == "reviewed" and r["objects"] == objects_before)
-    check("status change is logged, with who did it", len(r["log"]) == log_before + 1
-          and r["log"][-1] == {"t": r["log"][-1]["t"], "by": "tester", "action": "status",
-                               "from": "pending", "to": "reviewed"})
+    untouched = [a["id"] for a in pkg.annotations[1] if a["id"] not in {o["ann_id"] for o in objects_before}]
+    check("Tamamla -> reviewed, earlier decisions kept exactly",
+          store.status(1) == "reviewed" and all(o in r["objects"] for o in objects_before))
+    auto = [o for o in r["objects"] if o.get("auto_accepted")]
+    check("Tamamla accepts every untouched object, marked as automatic",
+          sorted(o["ann_id"] for o in auto) == sorted(untouched) and len(untouched) > 0
+          and all(o["state"] == "accepted" and o["category_id"] == next(
+              a["category_id"] for a in pkg.annotations[1] if a["id"] == o["ann_id"]) for o in auto))
+    status_line = next(e for e in r["log"] if e["action"] == "status")
+    check("status change is logged, with who did it",
+          status_line == {"t": status_line["t"], "by": "tester", "action": "status", "from": "pending", "to": "reviewed"})
+    check("each automatic accept is logged too, flagged as automatic",
+          sum(1 for e in r["log"] if e.get("auto")) == len(untouched) and len(r["log"]) == log_before + 1 + len(untouched))
+    check("automatic accepts are not counted as the reviewer's changes",
+          labelers.row(pkg, store, 1)["changes"] == log_before)
+    store.set_status(1, "pending")
+    undone = store.load(1)
+    check("taking it back to pending removes exactly the automatic accepts",
+          not any(o.get("auto_accepted") for o in undone["objects"])
+          and all(o in undone["objects"] for o in objects_before))
+    store.set_status(1, "reviewed")
+    kept = next(o for o in store.load(1)["objects"] if o.get("auto_accepted"))["ann_id"]
+    store.apply(1, kept, "accept")  # the reviewer decides on one by hand afterwards
+    store.set_status(1, "pending")
+    check("an object the reviewer touched after finishing stays decided",
+          any(o["ann_id"] == kept and o["state"] == "accepted" and "auto_accepted" not in o
+              for o in store.load(1)["objects"]))
+    store.apply(1, kept, "delete")
+    store.set_status(1, "reviewed")
+    check("a deleted object is not brought back by finishing",
+          next(o for o in store.load(1)["objects"] if o["ann_id"] == kept)["state"] == "deleted")
+    r = store.load(1)
     check("status_by / status_at record who finished the image and when",
           r["status_by"] == "tester" and r["status_at"] >= r["log"][0]["t"])
-    check("every object change is logged with its author", all(e.get("by") == "tester" for e in r["log"]))
+    check("every log line carries its author", all(e.get("by") == "tester" for e in r["log"]))
     mate = ReviewStore(pkg, "mehmet")  # a second person works on the same image later
     mate.apply(1, c, "accept")
     r2 = store.load(1)
@@ -162,39 +190,68 @@ def run(root):
           r2["log"][-1]["by"] == "mehmet" and r2["log"][0]["by"] == "tester")
     check("editing does not change who finished the image", r2["status_by"] == "tester" and r2["status_at"] == r["status_at"])
     check("editors listed in order", labelers.editors_of(r2) == ["tester", "mehmet"])
-    mate.set_status(1, "needs_edit")
-    check("moving it again records the new person", store.load(1)["status_by"] == "mehmet")
-    store.set_status(1, "reviewed")  # back to the state the next checks expect
+    mate.set_needs_edit(1, True)
+    r3 = store.load(1)
+    check("adding to the edit list records who and when, separate from the status",
+          r3["needs_edit"] is True and r3["edit_by"] == "mehmet" and r3["status_by"] == "tester"
+          and r3["status"] == "reviewed")
+    check("the flag does not change the status, both are on at once",
+          store.status(1) == "reviewed" and store.needs_edit(1) is True)
+    check("flag change is logged with the author", r3["log"][-1] == {
+        "t": r3["log"][-1]["t"], "by": "mehmet", "action": "flag", "from": False, "to": True})
     check("README field order kept after a status change", list(r)[:4] == ["image_id", "status", "reviewer", "updated"])
+    check("editors do not include people who only moved the marks", labelers.editors_of(r3) == ["tester", "mehmet"])
     store.apply(1, c, "delete")
-    check("editing a reviewed image keeps it reviewed", store.status(1) == "reviewed")
-    store.set_status(1, "needs_edit")
-    check("reviewed -> needs_edit", store.status(1) == "needs_edit")
-    store.apply(1, c, "accept")
-    check("editing a needs_edit image keeps it needs_edit", store.status(1) == "needs_edit")
+    check("editing keeps both marks", store.status(1) == "reviewed" and store.needs_edit(1) is True)
     n = len(store.load(1)["log"])
-    store.set_status(1, "needs_edit")
-    check("same status again writes nothing", len(store.load(1)["log"]) == n)
+    store.set_marks(1, status="reviewed", needs_edit=True)
+    check("same marks again writes nothing", len(store.load(1)["log"]) == n)
+    store.set_needs_edit(1, False)
+    check("taking it off the edit list keeps it done", store.status(1) == "reviewed" and store.needs_edit(1) is False)
     store.set_status(1, "pending")
     check("back to pending keeps decisions", store.status(1) == "pending" and len(store.load(1)["objects"]) >= 3)
-    check("status of an untouched image can be set (creates its file)",
-          store.status(2) == "pending" and store.set_status(2, "needs_edit") is not None
-          and store.status(2) == "needs_edit" and store.load(2)["objects"] == [])
-    check("setting pending on an untouched image writes no file",
-          store.status(3) == "pending" and store.set_status(3, "pending") is None and not store.path(3).exists())
-    try:
-        store.set_status(1, "done")
-        check("rejects unknown status", False)
-    except ReviewError:
-        check("rejects unknown status", True)
+    store.set_marks(1, status="reviewed", needs_edit=True)
+    check("both marks in one call, one log line each",
+          store.status(1) == "reviewed" and store.needs_edit(1) is True
+          and store.load(1)["log"][-1]["action"] == "flag"
+          and "status" in [e["action"] for e in store.load(1)["log"][-6:]])
+    check("a flag alone on an untouched image creates its file, still pending",
+          store.status(2) == "pending" and store.set_needs_edit(2, True) is not None
+          and store.status(2) == "pending" and store.needs_edit(2) and store.load(2)["objects"] == [])
+    check("nothing to change on an untouched image writes no file",
+          store.set_marks(3, status="pending", needs_edit=False) is None and not store.path(3).exists()
+          and not store.needs_edit(3))
+    for label, kwargs in [("unknown status", dict(status="done")),
+                          ("needs_edit as a status (it is a flag now)", dict(status="needs_edit")),
+                          ("flag that is not a bool", dict(needs_edit="yes"))]:
+        try:
+            store.set_marks(1, **kwargs)
+            check(f"rejects {label}", False)
+        except ReviewError:
+            check(f"rejects {label}", True)
+
+    # a file written while needs_edit was a third status becomes: not finished + flagged
+    legacy = store.load(2)
+    legacy.pop("needs_edit")
+    legacy.update(status="needs_edit", status_by="tester", status_at="2026-11-08T23:18:00")
+    legacy.pop("edit_by", None)
+    legacy.pop("edit_at", None)
+    store._write(2, legacy)
+    check("old 'needs_edit' status reads as pending + flagged",
+          store.status(2) == "pending" and store.needs_edit(2) is True)
+    check("... and its who / when move to the flag",
+          store.load(2)["edit_by"] == "tester" and "status_by" not in store.load(2))
+    store.set_needs_edit(2, False)
+
     old = store.load(1)
-    old["status"] = "reviewed"  # a file written before needs_edit existed
-    old.pop("status_by", None)
-    old.pop("status_at", None)
+    old["status"] = "reviewed"
+    for key in MARK_FIELDS:  # a file written before names were kept
+        old.pop(key, None)
     for entry in old["log"]:
-        entry.pop("by", None)    # ... and before names were kept
+        entry.pop("by", None)
     store._write(1, old)
-    check("old review files: reviewed still means done", store.status(1) == "reviewed")
+    check("old review files: reviewed still means done, not flagged",
+          store.status(1) == "reviewed" and store.needs_edit(1) is False)
     check("old review files: the file's reviewer is shown, marked as an old record",
           labelers.editors_of(store.load(1)) == ["tester (eski kayıt)"])
     store.apply(1, c, "accept")

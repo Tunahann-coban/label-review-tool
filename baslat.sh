@@ -24,5 +24,14 @@ if [ -n "$rebuild" ]; then
   (cd web && { [ -d node_modules ] || npm install --no-audit --no-fund; } && npm run build)
 fi
 
+# Eski kopya ayni portta calisiyorsa kapat (yoksa yeni kopya acilamaz ve tarayicida eski sayfa gorunur)
+port=8000
+prev=""
+for a in "$@"; do [ "$prev" = "--port" ] && port="$a"; prev="$a"; done
+old=$(lsof -ti "tcp:$port" -sTCP:LISTEN 2>/dev/null | head -1 || true)
+if [ -n "$old" ] && ps -o command= -p "$old" | grep -q "server.py"; then
+  kill "$old" && echo "Acik duran eski arac kapatildi." && sleep 1
+fi
+
 echo "[3/3] Arac aciliyor. Kapatmak icin Ctrl+C."
 exec .venv/bin/python server/server.py --open "$@"

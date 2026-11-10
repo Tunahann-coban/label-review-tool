@@ -74,7 +74,7 @@ Tarayıcıda **http://localhost:5173** adresini aç. Açılan **Projeler** sayfa
 Projeler listesi bilgisayarında `projects.json` dosyasında tutulur. Servisi bir kere `--package` ile başlattıktan sonra
 `--package` vermeden de başlatabilirsin: `.venv\Scripts\python server\server.py`. Ana sayfadan istediğin projeyi seçersin.
 
-Dışa aktarılan veri seti paketin yanındaki **`<paket>_export`** klasörüne (COCO için `<paket>_export_coco`) yazılır.
+Dışa aktarılanlar paket klasörünün **yanında**, her türün kendi büyük klasörüne yazılır: `<paket>_yolo`, `<paket>_coco` ve (düzenlenecekler için) `<paket>_duzenlenecek`. Örnek: paket `C:\...\bidvision_package2` ise YOLO çıktısı `C:\...\bidvision_package2_yolo\yolo_2026-11-10_23-45-12` olur, tam yol dışa aktarma penceresinde yazar. **Her dışa aktarma kendi klasörünü açar, adında gün ve saat olur.** Türler birbirine karışmaz, önceki dışa aktarmalar hiç silinmez ya da üzerine yazılmaz (eskileri istersen elle silersin). Başka bir yer istersen servise `--export <klasör>` ver, o klasörün içinde `yolo`, `coco`, `duzenlenecek` klasörleri açılır.
 Her projenin kendi klasörü vardır. Başka bir yer istersen servise `--export <klasör>` ver.
 
 ## 4. Önce örnek veriyle dene (5 dk)
@@ -84,18 +84,19 @@ Her projenin kendi klasörü vardır. Başka bir yer istersen servise `--export 
 | İş | Nasıl |
 |---|---|
 | Nesne seç | Sağdaki listeden ya da resimdeki maskeye tıkla |
-| Onayla | `Enter` |
+| Nesneyi onayla (hattın sınıfı doğru) | `Enter`. Bunu her nesne için yapman gerekmez: **Tamamlandı**'ya basınca dokunulmamış nesneler otomatik onaylanır |
 | Sil (yanlışlıkla sildiysen geri al) | `Del` (geri al: `Enter`) |
 | Sınıfı düzelt | Sağ üstteki **Sınıf** listesinden seç |
 | Maske görünümü (dolu / kenar / gizli) | `M` |
 | Kaçırılan nesneyi ekle | **Adayları göster** → kesikli çizgili parçaya tıkla → sınıf seç |
-| Resmi bitir (eklenecek bir şey yok) | **Tamamla** ya da `T`; sıradaki bekleyen resim açılır |
-| Elle maske / etiket eklenecek (Roboflow) | **Düzenlenecek** ya da `D` |
+| Resmi bitir (eklenecek bir şey yok) | Resmin altındaki **Tamamlandı olarak işaretle** ya da `T`; sıradaki bekleyen resim açılır. Tekrar basınca geri alınır |
+| Elle maske / etiket eklenecek (Roboflow) | **Düzenlenecekler'e ekle** ya da `D`. Tamamlandı'dan bağımsız: bir resim hem tamamlanmış hem listede olabilir. Resim açık kalır |
 | Gruplara göre resim listesi | Sağdaki **Resimler** sekmesi: Tümü / Bekleyen / Tamamlanan / Düzenlenecek. Birine tıklayınca açılır, tekrar düzeltebilirsin |
-| Sonraki resim | `N` |
+| Önceki / sonraki resim | Resmin hemen üstündeki **← Önceki** (`P`) ve **Sonraki →** (`N`). Sağdaki Resimler sekmesinde bir grup seçtiysen o grubun içinde gezer, çubuk bunu yazar |
+| Henüz tamamlanmamış sıradaki resme atla | **Bekleyene geç** (`B`) |
 | Seçimi bırak | `Esc` |
-| YOLO ya da COCO'ya aktar (yalnızca tamamlananlar) | Üstteki **Dışa aktar** → biçimi seç → penceredeki **Dışa aktar** |
-| Düzenlenecekleri Roboflow'a götür | **Dışa aktar** → **Düzenlenecekler** → `<paket>_export_duzenlenecek` klasörünü yükle (resimler + `_annotations.coco.json`) |
+| YOLO ya da COCO'ya aktar (tamamlananlar, düzenlenecekler listesindekiler hariç) | Üstteki **Dışa aktar** → biçimi seç → penceredeki **Dışa aktar** |
+| Düzenlenecekleri Roboflow'a götür | **Dışa aktar** → **Düzenlenecekler** → `<paket>_duzenlenecek\duzenlenecek_<tarih>` klasörünü yükle (resimler + `_annotations.coco.json`) |
 | Başka projeye geç | Sol üstteki **← Projeler** |
 
 Kararlar her işlemde `sample_package/reviews/` klasörüne kaydedilir. Sayfayı yenilesen de durur. Baştan başlamak için o klasörü sil.
@@ -127,7 +128,7 @@ yüklenmezse proje sınıfsız ve nesnesiz olur. Bu araç maske çizmediği içi
 | Sayfada "Servise ulaşılamıyor" | Terminal 1 çalışıyor mu? Hata varsa son satırları ekibe gönder. |
 | `python` bulunamadı | Python kurulurken PATH seçilmemiş. Python'u yeniden kur, ya da Mac'te `python3` kullan. |
 | `npm` bulunamadı | Node.js kurulu değil. |
-| Servis `address already in use` diyor | 8000 portu dolu: başka bir terminalde servis açık kalmış, onu kapat. |
+| Servis `address already in use` / `portu dolu` diyor, ya da `baslat.bat` açılıyor ama sayfa **eski** | 8000 portunda aracın eski bir kopyası hâlâ çalışıyor (görünmeyen ya da küçültülmüş bir pencere). `baslat.bat` bunu kendisi kapatır; başka yolla açtıysan eski pencerede `Ctrl+C` yap. |
 | `annotations.json not found` | `--package` yolu yanlış: klasörün içinde `annotations.json` olmalı. |
 | `same file stem` hatası | Pakette aynı adlı iki fotoğraf var (örn. `a.jpg` ve `a.png`). Ekibe bildir. |
 | `npm install` sırasında `npm warn allow-scripts ... esbuild` | Zararsız, bir şey yapma. Arayüz yine çalışır. |

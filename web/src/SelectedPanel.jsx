@@ -2,6 +2,8 @@ import { STATE_LABELS } from './states'
 
 // Nothing to accept on these: already decided, or added by the reviewer.
 const ALREADY_DECIDED = ['accepted', 'changed', 'added']
+// What the greyed-out accept button says instead, so it reads as done, not as broken.
+const DONE_LABELS = { accepted: 'Onaylandı ✓', changed: 'Değiştirildi ✓', added: 'Eklendi ✓' }
 
 // Actions for the selected object (accept, change class, delete), or for a selected
 // candidate (pick a class to add it). The panel keeps the same rows (and height)
@@ -37,6 +39,7 @@ export default function SelectedPanel({ object, reasons, candidate, categories, 
   }
 
   const deleted = object?.state === 'deleted'
+  const decided = Boolean(object) && ALREADY_DECIDED.includes(object.state)
   const name = object && (categoryNames[object.category_id] ?? `#${object.category_id}`)
 
   return (
@@ -60,9 +63,9 @@ export default function SelectedPanel({ object, reasons, candidate, categories, 
         {object?.state === 'changed' && <>ilk sınıf: {categoryNames[object.orig_category_id]}</>}
       </div>
       <div className="actions">
-        <button className="accept" onClick={() => onDecide('accept')}
+        <button className={decided ? 'accept decided' : 'accept'} onClick={() => onDecide('accept')}
           disabled={!object || saving || ALREADY_DECIDED.includes(object.state)}>
-          {deleted ? 'Geri al' : 'Onayla'} <kbd>Enter</kbd>
+          {decided ? DONE_LABELS[object.state] : <>{deleted ? 'Geri al' : 'Onayla'} <kbd>Enter</kbd></>}
         </button>
         <button className="delete" onClick={() => onDecide('delete')} disabled={!object || saving || deleted}>
           Sil <kbd>Del</kbd>

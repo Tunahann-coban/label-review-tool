@@ -13,14 +13,16 @@ import json
 import shutil
 import sys
 import tempfile
+from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 import coco_exporter  # noqa: E402
 import edit_exporter  # noqa: E402
+import export_folders  # noqa: E402
 import exporter  # noqa: E402
 import labelers  # noqa: E402
-from package import Package  # noqa: E402
+from package import Package, merge_objects  # noqa: E402
 from review_store import ReviewStore  # noqa: E402
 
 SOURCE = Path(__file__).parent.parent / "sample_package"
@@ -128,7 +130,7 @@ def test_unit_split_export(tmp):
     check("well-named units: no split warnings", not any("ünite" in w or "boş" in w for w in s["warnings"]))
 
     c = coco_exporter.export_coco(pkg, store, tmp / "units_coco")
-    files = sorted(p.name for p in (tmp / "units_coco").iterdir())
+    files = sorted(p.name for p in (tmp / "units_coco").iterdir() if p.name != exporter.MARKER)
     check(f"COCO: one file per set, plus the labelers table ({files})",
           files == ["instances_test.json", "instances_train.json", "instances_val.json", "labelers.csv"])
     table = (tmp / "units_coco" / "labelers.csv").read_text(encoding="utf-8-sig").splitlines()
@@ -140,9 +142,38 @@ def test_unit_split_export(tmp):
     check("COCO and YOLO summaries agree per set", c["splits"] == s["splits"])
 
 
+def test_export_folders(tmp):
+    check("the registry's <package>_export gives <package>_yolo / _coco / _duzenlenecek beside it",
+          export_folders.kind_root(tmp / "pkg_export", "yolo") == (tmp / "pkg_yolo").resolve()
+          and export_folders.kind_root(tmp / "pkg_export", "coco") == (tmp / "pkg_coco").resolve()
+          and export_folders.kind_root(tmp / "pkg_export", "duzenlenecek") == (tmp / "pkg_duzenlenecek").resolve())
+    check("a folder chosen with --export becomes the parent of one folder per kind",
+          export_folders.kind_root(tmp / "mine", "yolo") == (tmp / "mine" / "yolo").resolve())
+    when = datetime(2026, 11, 10, 23, 45, 12)
+    a = export_folders.new_folder(tmp / "pkg_export", "yolo", when)
+    check("name = kind + date + time, inside the big folder of its kind",
+          a.name == "yolo_2026-11-10_23-45-12" and a.parent.name == "pkg_yolo")
+    a.mkdir(parents=True)
+    check("same second: numbered, never the same folder",
+          export_folders.new_folder(tmp / "pkg_export", "yolo", when).name == "yolo_2026-11-10_23-45-12_2")
+    c = export_folders.new_folder(tmp / "pkg_export", "coco", when)
+    e = export_folders.new_folder(tmp / "pkg_export", "duzenlenecek", when)
+    check("each kind has its own big folder, so kinds never mix",
+          c.parent.name == "pkg_coco" and e.parent.name == "pkg_duzenlenecek"
+          and len({a.parent, c.parent, e.parent}) == 3)
+    try:
+        export_folders.new_folder(tmp / "pkg_export", "zip", when)
+        check("unknown kind refused", False)
+    except ValueError:
+        check("unknown kind refused", True)
+    pat = export_folders.pattern(tmp / "pkg_export", "yolo")
+    check("the preview shows a time pattern in the real folder's place",
+          pat.name == "yolo_YYYY-AA-GG_SS-DD-SN" and pat.parent.name == "pkg_yolo" and not pat.exists())
+
 def main():
     tmp = Path(tempfile.mkdtemp())
     try:
+        test_export_folders(tmp)
         test_merge_parts()
         test_unit_split_export(tmp)
         run(tmp)
@@ -179,9 +210,13 @@ def run(tmp):
     p = exporter.preview(pkg, store, out)
     check("preview writes nothing", not out.exists() and not (tmp / "export.tmp").exists())
     s = exporter.export(pkg, store, out)
-    check("preview numbers equal the real export", p == s)
-    untouched = sum(1 for a in anns1 if a["id"] not in (changed["id"], deleted["id"]))
-    check(f"untouched objects counted ({untouched})", s["untouched_objects"] == untouched)
+    check("preview numbers equal the real export", {**p, "path": 0} == {**s, "path": 0})
+    # finishing an image ("Tamamlandı") accepts its untouched objects, so none go out unseen
+    check("no exported object is untouched: finishing accepted them", s["untouched_objects"] == 0)
+    states = {o["id"]: o["state"] for o in merge_objects(pkg.annotations[1], store.load(1))}
+    untouched_ids = [a["id"] for a in anns1 if a["id"] not in (changed["id"], deleted["id"])]
+    check("the others were accepted automatically", all(states[i] == "accepted" for i in untouched_ids)
+          and states[changed["id"]] == "changed" and states[deleted["id"]] == "deleted")
     check("pending images counted", s["pending_images"] == 1)
 
     # --- layout ---
@@ -250,41 +285,60 @@ def run(tmp):
     check("warns about two-part object", "2 parçalı, tek satırda birleştirildi" in w_text)
     check("warns about invalid polygon", "geçersiz çokgen (4 değer)" in w_text)
 
-    # --- re-export removes stale files ---
+    # --- every export gets its own folder; an earlier one is never touched ---
+    def files_of(folder):
+        return sorted(p.relative_to(folder).as_posix() for p in folder.rglob("*") if p.is_file())
+
+    first_out, first_files = out, files_of(out)
     (tmp / "pkg" / "reviews" / "img_002.json").unlink()  # img_002 back to pending
-    exporter.export(pkg, store, out)
-    check("re-export drops files of images no longer reviewed",
-          not (out / "labels" / "train" / "img_002.txt").exists() and not (out / "images" / "train" / "img_002.jpg").exists())
+    out2 = export_folders.new_folder(tmp / "pkg_export", "yolo")
+    exporter.export(pkg, store, out2)
+    check("a second export goes into its own folder and holds the new state",
+          out2 != first_out and not (out2 / "labels" / "train" / "img_002.txt").exists()
+          and (out2 / "labels" / "train" / "img_001.txt").exists())
+    check("the first export is left exactly as it was",
+          files_of(first_out) == first_files and (first_out / "labels" / "train" / "img_002.txt").exists())
+    try:
+        exporter.export(pkg, store, first_out)
+        check("an existing export folder is never overwritten", False)
+    except exporter.ExportError:
+        check("an existing export folder is never overwritten", files_of(first_out) == first_files)
 
-    # --- images marked "needs editing" ---
+    # --- images flagged "needs editing" ---
     store.set_status(2, "reviewed")
-    store.set_status(3, "needs_edit")
+    store.set_needs_edit(3, True)  # img_003: not finished, on the edit list
     store.apply(3, pkg.annotations[3][0]["id"], "delete")  # a deleted object must stay out of the edit export
-    s2 = exporter.export(pkg, store, out)
-    check("needs_edit image is not in the YOLO export",
-          sorted(p.name for p in (out / "images" / "train").iterdir()) == ["img_001.jpg", "img_002.jpg"])
-    check("needs_edit counted separately, still part of 'not done'",
+    out3 = export_folders.new_folder(tmp / "pkg_export", "yolo")
+    s2 = exporter.export(pkg, store, out3)
+    check("flagged image is not in the YOLO export",
+          sorted(p.name for p in (out3 / "images" / "train").iterdir()) == ["img_001.jpg", "img_002.jpg"])
+    check("flagged counted separately from unfinished (this one is both)",
           s2["needs_edit_images"] == 1 and s2["pending_images"] == 1)
-    check("COCO summary counts it too", coco_exporter.preview_coco(pkg, store, tmp / "c")["needs_edit_images"] == 1)
+    check("the export lists the images it left out, with the reason",
+          s2["left_out"] == [{"id": 3, "file_name": "img_003.jpg", "unfinished": True, "needs_edit": True}])
+    check("COCO summary counts and lists it too",
+          coco_exporter.preview_coco(pkg, store, tmp / "c")["needs_edit_images"] == 1
+          and coco_exporter.preview_coco(pkg, store, tmp / "c")["left_out"] == s2["left_out"])
 
-    edit_out = tmp / "export_duzenlenecek"
+    edit_out = export_folders.new_folder(tmp / "pkg_export", "duzenlenecek")
     pv = edit_exporter.preview(pkg, store, edit_out)
     check("edit preview writes nothing", not edit_out.exists())
     ev = edit_exporter.export(pkg, store, edit_out)
-    check("edit preview numbers equal the real export", pv == ev)
+    check("edit preview numbers equal the real export", {**pv, "path": 0} == {**ev, "path": 0})
     check("edit folder holds the photo and the COCO file",
           sorted(p.name for p in edit_out.iterdir() if p.name != exporter.MARKER)
           == ["_annotations.coco.json", "img_003.jpg", "labelers.csv"])
     rows = list(csv.DictReader((edit_out / "labelers.csv").read_text(encoding="utf-8-sig").splitlines()))
     check("edit export: labelers.csv names who marked the photo",
-          [(r["image"], r["status"], r["status_by"]) for r in rows] == [("img_003.jpg", "needs_edit", "tester")]
+          [(r["image"], r["status"], r["needs_edit"], r["edit_by"]) for r in rows]
+          == [("img_003.jpg", "pending", "yes", "tester")]
           and rows[0]["editors"] == "tester" and rows[0]["changes"] == "1")
-    yolo_rows = list(csv.DictReader((out / "labelers.csv").read_text(encoding="utf-8-sig").splitlines()))
+    yolo_rows = list(csv.DictReader((out3 / "labelers.csv").read_text(encoding="utf-8-sig").splitlines()))
     check("YOLO export: labelers.csv holds the exported photos only",
           sorted(r["image"] for r in yolo_rows) == ["img_001.jpg", "img_002.jpg"]
           and all(r["status"] == "reviewed" and r["status_by"] == "tester" for r in yolo_rows))
     check("labelers.csv opens in Excel with Turkish letters (BOM)",
-          (out / "labelers.csv").read_bytes().startswith(b"\xef\xbb\xbf"))
+          (out3 / "labelers.csv").read_bytes().startswith(b"\xef\xbb\xbf"))
     coco = json.loads((edit_out / "_annotations.coco.json").read_text(encoding="utf-8"))
     kept3 = len(pkg.annotations[3]) - 1
     check("COCO: one image, deleted object left out, bbox and area present",
@@ -293,17 +347,33 @@ def run(tmp):
     check("COCO: categories like the package", [c["name"] for c in coco["categories"]] == [c["name"] for c in pkg.categories])
     check("edit summary counts", ev["images"] == 1 and ev["objects"] == kept3 and ev["empty_images"] == 0)
     check("photo copied byte for byte", filecmp.cmp(edit_out / "img_003.jpg", tmp / "pkg" / "images" / "img_003.jpg", shallow=False))
-    store.set_status(3, "reviewed")
-    ev = edit_exporter.export(pkg, store, edit_out)
-    check("re-export with nothing marked leaves an empty folder, no stale photo",
-          ev["images"] == 0 and not (edit_out / "img_003.jpg").exists())
+    store.set_needs_edit(3, False)
+    edit_out2 = export_folders.new_folder(tmp / "pkg_export", "duzenlenecek")
+    ev = edit_exporter.export(pkg, store, edit_out2)
+    check("a later edit export with nothing flagged is empty, the earlier one keeps its photo",
+          ev["images"] == 0 and not (edit_out2 / "img_003.jpg").exists() and (edit_out / "img_003.jpg").exists())
     try:
         edit_exporter.export(pkg, store, tmp / "pkg")
-        check("edit export refuses a folder it did not create", False)
+        check("edit export refuses a folder that already exists", False)
     except exporter.ExportError:
-        check("edit export refuses a folder it did not create", (tmp / "pkg" / "annotations.json").exists())
-    store.set_status(3, "pending")
+        check("edit export refuses a folder that already exists", (tmp / "pkg" / "annotations.json").exists())
 
+    # a photo can be finished AND on the edit list: it leaves YOLO / COCO, it stays finished
+    store.set_marks(2, status="reviewed", needs_edit=True)
+    out4 = export_folders.new_folder(tmp / "pkg_export", "yolo")
+    s3 = exporter.export(pkg, store, out4)
+    check("finished + flagged photo is held back from the YOLO export",
+          sorted(p.name for p in (out4 / "images" / "train").iterdir()) == ["img_001.jpg"])
+    check("... counted as flagged, not as unfinished (img_003 is the unfinished one)",
+          s3["needs_edit_images"] == 1 and s3["pending_images"] == 1)
+    check("... and listed as left out, flagged but finished",
+          {"id": 2, "file_name": "img_002.jpg", "unfinished": False, "needs_edit": True} in s3["left_out"])
+    c3 = coco_exporter.preview_coco(pkg, store, tmp / "c")
+    check("COCO holds it back too", c3["images"] == 1 and c3["needs_edit_images"] == 1)
+    edit_out3 = export_folders.new_folder(tmp / "pkg_export", "duzenlenecek")
+    ev = edit_exporter.export(pkg, store, edit_out3)
+    check("it is in the edit export, with its masks", ev["images"] == 1 and (edit_out3 / "img_002.jpg").exists())
+    store.set_needs_edit(2, False)
     # --- safety ---
     foreign = tmp / "not_ours"
     foreign.mkdir()

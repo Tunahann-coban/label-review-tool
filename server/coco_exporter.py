@@ -6,10 +6,10 @@
   instances_test.json
 """
 import json
-import os
 from datetime import datetime
 from pathlib import Path
 
+import exporter
 import labelers
 import splits
 from package import bbox_of, merge_objects
@@ -28,7 +28,9 @@ def area_of(segmentation):
 
 def build_coco(pkg, store):
     """({split: coco dict}, summary). Only reviewed images; deleted objects left out."""
-    reviewed = [img for img_id, img in pkg.images.items() if store.status(img_id) == "reviewed"]
+    # finished images only; flagged ones ("needs edit") go to the edit export instead
+    reviewed = [img for img_id, img in pkg.images.items()
+                if store.status(img_id) == "reviewed" and not store.needs_edit(img_id)]
     split_by_image, units_per_split, warnings = splits.assign(reviewed)
     categories = [{"id": c["id"], "name": c["name"], "supercategory": c.get("supercategory", "")}
                   for c in pkg.categories]
@@ -60,37 +62,36 @@ def build_coco(pkg, store):
     summary = {
         "images": len(reviewed),
         "annotations": ann_id - 1,
-        "pending_images": len(pkg.images) - len(reviewed),  # everything not done, needs_edit included
-        "needs_edit_images": sum(1 for i in pkg.images if store.status(i) == "needs_edit"),
+        # two separate reasons (an image can be both): not finished, flagged for editing
+        "pending_images": sum(1 for i in pkg.images if store.status(i) != "reviewed"),
+        "needs_edit_images": sum(1 for i in pkg.images if store.needs_edit(i)),
         "splits": {s: {"images": len(sets[s]["images"]), "objects": len(sets[s]["annotations"]),
                        "units": units_per_split[s]} for s in splits.SPLITS},
+        "left_out": exporter.left_out(pkg, store),
         "warnings": warnings,
     }
     return {s: c for s, c in sets.items() if c["images"]}, summary
 
 
 def preview_coco(pkg, store, target):
-    """What export_coco() would write; nothing is written."""
+    """What export_coco() would write (target is the folder name pattern); nothing is written."""
     _, summary = build_coco(pkg, store)
-    summary["path"] = str(Path(target).resolve())
+    summary["path"] = str(target)
     return summary
 
 
 def export_coco(pkg, store, target):
-    """Writes instances_<set>.json for each set with images; removes files of sets
-    that became empty, so a stale set file never lingers. Each file is swapped in atomically."""
+    """Writes instances_<set>.json for each set with images, plus labelers.csv, into a
+    NEW folder (target must not exist, see exporter.create_folder)."""
     sets, summary = build_coco(pkg, store)
-    out_dir = Path(target).resolve()
-    out_dir.mkdir(parents=True, exist_ok=True)
-    for s in splits.SPLITS:
-        out = out_dir / f"instances_{s}.json"
-        if s in sets:
-            tmp = out.with_suffix(".json.tmp")
-            tmp.write_text(json.dumps(sets[s], ensure_ascii=False, indent=1), encoding="utf-8")
-            os.replace(tmp, out)
-        elif out.exists():
-            out.unlink()
-    included = [img["id"] for c in sets.values() for img in c["images"]]
-    (out_dir / "labelers.csv").write_text(labelers.to_csv(labelers.rows(pkg, store, included)), encoding="utf-8")
-    summary["path"] = str(out_dir)
-    return summary
+
+    def build(out):
+        out.mkdir(parents=True)
+        (out / exporter.MARKER).write_text("created by the label review tool\n", encoding="utf-8")
+        for s, coco in sets.items():
+            (out / f"instances_{s}.json").write_text(json.dumps(coco, ensure_ascii=False, indent=1), encoding="utf-8")
+        included = [img["id"] for c in sets.values() for img in c["images"]]
+        (out / "labelers.csv").write_text(labelers.to_csv(labelers.rows(pkg, store, included)), encoding="utf-8")
+        return summary
+
+    return exporter.create_folder(target, build)

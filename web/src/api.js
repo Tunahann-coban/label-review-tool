@@ -20,13 +20,14 @@ export const fetchImage = (id) => request(`/api/images/${id}`)
 export const imageFileUrl = (id) => `/api/images/${id}/file`
 export const imageThumbUrl = (id) => `/api/images/${id}/thumb`
 
-// status: 'pending' | 'reviewed' (tamamlandı) | 'needs_edit' (düzenlenecek).
-// Object decisions are kept. Returns the updated image detail.
-export const postStatus = (id, status) =>
+// marks: { status?: 'pending' | 'reviewed' (tamamlandı), needs_edit?: true | false (the edit
+// list) }. Either or both; what is left out stays. Object decisions are kept.
+// Returns the updated image detail.
+export const postMarks = (id, marks) =>
   request(`/api/images/${id}/status`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ status }),
+    body: JSON.stringify(marks),
   })
 
 // What an export would write; nothing is written.

@@ -41,7 +41,10 @@ export default function ImageList({ images, index, group, onGroup, onPick }) {
                 <span className="file">{img.file_name}</span>
                 {img.status_by && <span className="by">{img.status_by}</span>}
               </span>
-              <span className={`status status-${img.status}`}>{IMAGE_STATUS_LABELS[img.status]}</span>
+              <span className="row-marks">
+                {img.needs_edit && <span className="flag-chip" title="Düzenlenecekler listesinde">⚑</span>}
+                <span className={`status status-${img.status}`}>{IMAGE_STATUS_LABELS[img.status]}</span>
+              </span>
             </li>
           ))}
         </ul>

@@ -1,18 +1,19 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   fetchCOCOExportPreview, fetchEditExportPreview, fetchExportPreview, fetchImage, fetchPackage,
-  postCOCOExport, postEditExport, postExport, postReview, postStatus,
+  postCOCOExport, postEditExport, postExport, postMarks, postReview,
 } from './api'
 import ExportDialog from './ExportDialog'
 import Toast from './Toast'
 import ImageList from './ImageList'
-import ImageStatusCard from './ImageStatusCard'
+import ImageNav from './ImageNav'
+import ImageStatusBar from './ImageStatusBar'
 import ImageViewer from './ImageViewer'
 import ObjectList from './ObjectList'
 import SelectedPanel from './SelectedPanel'
 import { DEFAULT_THRESHOLD, catchAllCategories, orderObjects } from './suspects'
 import Toolbar from './Toolbar'
-import { findNextPending, moveInGroup } from './navigation'
+import { findNextPending, inGroup, moveInGroup } from './navigation'
 import { availableCandidates } from './candidates'
 import { nextMaskView } from './maskView'
 
@@ -90,6 +91,13 @@ export default function App({ onGoHome }) {
   )
   const selectedReasons = orderedItems.find((it) => it.obj.id === selectedId)?.reasons ?? []
   const nextPendingIndex = pkg ? findNextPending(pkg.images, index) : null
+  const jumpToPending = useCallback(() => { if (nextPendingIndex != null) setIndex(nextPendingIndex) }, [nextPendingIndex])
+
+  // where this photo stands inside the group Previous / Next walk through
+  const inside = useMemo(
+    () => (pkg ? pkg.images.map((_, i) => i).filter((i) => inGroup(pkg.images[i], group)) : []),
+    [pkg, group])
+  const position = inside.includes(index) ? inside.indexOf(index) + 1 : null
 
   const candidates = useMemo(() => (current ? availableCandidates(current) : []), [current])
   const selectedCandidate = candidates.find((c) => c.id === selectedCandidateId) ?? null
@@ -114,22 +122,32 @@ export default function App({ onGoHome }) {
     }
   }, [current])
 
-  // "Tamamla" / "Düzenlenecek" / back to pending. Coming from pending, the next
-  // pending image opens, so the queue keeps moving; in the other groups the image
-  // stays open, so it can still be fixed.
-  const markStatus = useCallback(async (status) => {
-    if (!current || saving || current.status === status) return
-    const wasPending = current.status === 'pending'
+  // The two marks on the whole image: finished ("Tamamlandı") and on the edit list
+  // ("Düzenlenecekler'e ekle"). Pressing "finished" on an unfinished image opens the next
+  // unfinished one, so the queue keeps moving. The edit-list toggle keeps the image
+  // open, so it can still be marked finished.
+  const setMarks = useCallback(async (marks) => {
+    if (!current || saving) return
+    const finishing = current.status === 'pending' && marks.status === 'reviewed'
     setSaving(true)
     setSaveError(null)
     try {
-      const updated = await postStatus(current.image.id, status)
+      const updated = await postMarks(current.image.id, marks)
       setDetail(updated)
       const images = pkg.images.map((img) =>
         img.id === updated.image.id
-          ? { ...img, status: updated.status, status_by: updated.status_by } : img)
+          ? { ...img, status: updated.status, needs_edit: updated.needs_edit, status_by: updated.status_by }
+          : img)
       setPkg((p) => ({ ...p, images }))
-      if (wasPending && status !== 'pending') {
+      // say where the photo went: marking something is easy to miss otherwise
+      const name = updated.image.file_name
+      const said = []
+      if (marks.status === 'reviewed') said.push(`✓ ${name} tamamlananlara eklendi`)
+      if (marks.status === 'pending') said.push(`${name} bekleyenlere geri alındı`)
+      if (marks.needs_edit === true) said.push(`⚑ ${name} düzenlenecekler listesine eklendi`)
+      if (marks.needs_edit === false) said.push(`${name} düzenlenecekler listesinden çıkarıldı`)
+      if (said.length) setToast({ kind: 'success', text: said.join(' · ') })
+      if (finishing) {
         const next = findNextPending(images, index)
         if (next != null) setIndex(next)
       }
@@ -139,6 +157,13 @@ export default function App({ onGoHome }) {
       setSaving(false)
     }
   }, [current, saving, pkg, index])
+
+  const toggleDone = useCallback(
+    () => current && setMarks({ status: current.status === 'reviewed' ? 'pending' : 'reviewed' }),
+    [current, setMarks])
+  const toggleEdit = useCallback(
+    () => current && setMarks({ needs_edit: !current.needs_edit }),
+    [current, setMarks])
 
   const decide = useCallback((action, categoryId) => {
     if (!selected || saving) return
@@ -163,6 +188,13 @@ export default function App({ onGoHome }) {
 
   // Export: dialog manages its own state; App just opens it and handles the toast
   const openExport = useCallback(() => setExportDialog(true), [])
+  const openImageByName = useCallback((fileName) => {
+    const i = pkg?.images.findIndex((img) => img.file_name === fileName) ?? -1
+    if (i < 0) return
+    setGroup('all')
+    setIndex(i)
+    setExportDialog(false)
+  }, [pkg])
   const closeExport = useCallback(() => setExportDialog(false), [])
 
   const fetchPreviewForFormat = useCallback((format) => {
@@ -198,15 +230,17 @@ export default function App({ onGoHome }) {
       if (e.key === 'Enter') decide('accept')
       else if (e.key === 'Delete') decide('delete')
       else if (e.key === 'n' || e.key === 'N') go(1)
+      else if (e.key === 'p' || e.key === 'P') go(-1)
+      else if (e.key === 'b' || e.key === 'B') jumpToPending()
       else if (e.key === 'm' || e.key === 'M') setMaskView(nextMaskView)
-      else if (e.key === 't' || e.key === 'T') markStatus('reviewed')
-      else if (e.key === 'd' || e.key === 'D') markStatus('needs_edit')
+      else if (e.key === 't' || e.key === 'T') toggleDone()
+      else if (e.key === 'd' || e.key === 'D') toggleEdit()
       else return
       e.preventDefault()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [decide, go, markStatus, clearSelection, exportDialog, closeExport])
+  }, [decide, go, jumpToPending, toggleDone, toggleEdit, clearSelection, exportDialog, closeExport])
 
   if (error) return <main className="app app-message"><p className="error">Hata: {error}</p></main>
   if (offline) {
@@ -222,8 +256,7 @@ export default function App({ onGoHome }) {
 
   return (
     <main className="app">
-      <Toolbar images={pkg.images} index={index} onGo={go} canPrev={canPrev} canNext={canNext}
-        nextPendingIndex={nextPendingIndex} onNextPending={() => setIndex(nextPendingIndex)}
+      <Toolbar images={pkg.images}
         saving={saving} saveError={saveError} onExport={openExport}
         maskView={maskView} onMaskView={setMaskView} onGoHome={onGoHome} />
       {exportDialog && (
@@ -231,19 +264,30 @@ export default function App({ onGoHome }) {
           onFetchPreview={fetchPreviewForFormat}
           onRunExport={runExportForFormat}
           onDone={handleExportDone}
+          onOpenImage={openImageByName}
           onClose={closeExport} />
       )}
       <Toast toast={toast} onClose={closeToast} />
       {current ? (
         <div className="workspace">
-          <ImageViewer detail={current} categoryNames={categoryNames}
-            selectedId={selectedId} onSelect={selectObject}
-            candidates={showCandidates ? candidates : null} view={maskView}
-            selectedCandidateId={selectedCandidateId} onSelectCandidate={selectCandidate} />
+          <div className="stage-col">
+            <ImageViewer detail={current} categoryNames={categoryNames}
+              selectedId={selectedId} onSelect={selectObject}
+              candidates={showCandidates ? candidates : null} view={maskView}
+              selectedCandidateId={selectedCandidateId} onSelectCandidate={selectCandidate}
+              header={(
+                <ImageNav fileName={current.image.file_name} position={position}
+                  count={inside.length} group={group} onGroup={setGroup}
+                  canPrev={canPrev} canNext={canNext} onPrev={() => go(-1)} onNext={() => go(1)}
+                  canJump={nextPendingIndex != null} onJump={jumpToPending} />
+              )} />
+            <ImageStatusBar status={current.status} needsEdit={current.needs_edit}
+              statusBy={current.status_by} statusAt={current.status_at}
+              editBy={current.edit_by} editAt={current.edit_at}
+              editors={current.editors} reviewer={pkg.reviewer}
+              onToggleDone={toggleDone} onToggleEdit={toggleEdit} saving={saving} />
+          </div>
           <aside className="sidebar">
-            <ImageStatusCard status={current.status} statusBy={current.status_by}
-              statusAt={current.status_at} editors={current.editors} reviewer={pkg.reviewer}
-              onSet={markStatus} saving={saving} />
             <SelectedPanel object={selected} reasons={selectedReasons} candidate={selectedCandidate}
               categories={pkg.categories} categoryNames={categoryNames}
               onDecide={decide} onAddCandidate={addCandidate} onCancel={clearSelection} saving={saving} />

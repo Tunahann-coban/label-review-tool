@@ -1,5 +1,6 @@
-"""Writes the images marked "needs editing" as one folder for manual work elsewhere
-(Roboflow): the photos plus their current masks as a COCO file.
+"""Writes the images flagged "needs editing" ("Düzenlenecekler'e ekle", finished or not)
+as one folder for manual work elsewhere (Roboflow): the photos plus their current
+masks as a COCO file.
 
 <export>_duzenlenecek/
   <photo>.jpg ...              copies of the marked photos
@@ -15,7 +16,7 @@ from datetime import datetime
 from pathlib import Path
 
 import labelers
-from exporter import MARKER, swap_in
+from exporter import MARKER, create_folder
 from coco_exporter import area_of
 from package import bbox_of, merge_objects
 
@@ -24,7 +25,7 @@ COCO_FILE = "_annotations.coco.json"
 
 def plan(pkg, store):
     """(coco dict, [(source path, file name)], summary). Nothing is written."""
-    marked = [img for image_id, img in pkg.images.items() if store.status(image_id) == "needs_edit"]
+    marked = [img for image_id, img in pkg.images.items() if store.needs_edit(image_id)]
     categories = [{"id": c["id"], "name": c["name"], "supercategory": c.get("supercategory", "")}
                   for c in pkg.categories]
     coco = {"info": {"description": "Marked for editing by label-review-tool", "version": "1.0",
@@ -61,9 +62,9 @@ def plan(pkg, store):
 
 
 def preview(pkg, store, target):
-    """What export() would write, and where; nothing is written."""
+    """What export() would write, and where (target is the folder name pattern); nothing is written."""
     _, _, summary = plan(pkg, store)
-    summary["path"] = str(Path(target).resolve())
+    summary["path"] = str(target)
     return summary
 
 
@@ -80,4 +81,4 @@ def export(pkg, store, target):
         (out / "labelers.csv").write_text(labelers.to_csv(labelers.rows(pkg, store, included)), encoding="utf-8")
         return summary
 
-    return swap_in(target, build)
+    return create_folder(target, build)

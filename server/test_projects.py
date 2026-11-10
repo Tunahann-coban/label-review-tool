@@ -131,6 +131,7 @@ def test_export_folders(tmp):
 
     c.post(f"/api/projects/{a['id']}/activate", headers=TOOL)
     c.post("/api/images/1/review", headers=TOOL, json={"ann_id": 1, "action": "accept"})
+    c.post("/api/images/1/status", headers=TOOL, json={"status": "reviewed"})  # Tamamlandı
     coco = c.post("/api/export/coco", headers=TOOL)
     yolo = c.post("/api/export", headers=TOOL)
     check(f"COCO then YOLO export both work (HTTP {coco.status_code}, {yolo.status_code})",
@@ -138,6 +139,23 @@ def test_export_folders(tmp):
     coco_again = c.post("/api/export/coco", headers=TOOL)
     check("COCO file survives a later YOLO export", Path(coco_again.json()["path"]).exists()
           and Path(coco.json()["path"]).exists())
+
+    # every export is a new dated folder inside the big folder of its kind; earlier ones stay
+    paths = [Path(x.json()["path"]) for x in (yolo, coco, coco_again)]
+    check("each kind has its own big folder beside the package (<package>_yolo, <package>_coco)",
+          paths[0].parent.name == "pkgA_yolo" and paths[1].parent.name == "pkgA_coco"
+          and paths[2].parent == paths[1].parent and paths[0].parent != paths[1].parent)
+    check("each export has its own dated folder (yolo_..., coco_..., a repeat is numbered)",
+          paths[0].name.startswith("yolo_20") and paths[1].name.startswith("coco_20")
+          and len({p.name for p in paths}) == 3 and all(p.exists() for p in paths))
+    again = c.post("/api/export", headers=TOOL)
+    check("a second YOLO export leaves the first one alone",
+          again.status_code == 200 and Path(again.json()["path"]) != paths[0] and paths[0].exists()
+          and (paths[0] / "data.yaml").exists())
+    pv = c.get("/api/export/preview").json()
+    check("preview shows the folder name pattern and the list of left-out images",
+          Path(pv["path"]).name == "yolo_YYYY-AA-GG_SS-DD-SN" and isinstance(pv["left_out"], list)
+          and {x["file_name"] for x in pv["left_out"]} == {"img_002.jpg", "img_003.jpg"})
 
 
 def test_image_states_api(tmp):
@@ -149,38 +167,52 @@ def test_image_states_api(tmp):
     check("a decision alone leaves the image pending", r.json()["status"] == "pending")
     r = c.post("/api/images/1/status", headers=TOOL, json={"status": "reviewed"})
     check("POST status: reviewed", r.status_code == 200 and r.json()["status"] == "reviewed")
-    r = c.post("/api/images/2/status", headers=TOOL, json={"status": "needs_edit"})
-    check("POST status: needs_edit", r.status_code == 200 and r.json()["status"] == "needs_edit")
+    r = c.post("/api/images/2/status", headers=TOOL, json={"needs_edit": True})
+    check("POST flag alone: on the edit list, still pending",
+          r.status_code == 200 and r.json()["status"] == "pending" and r.json()["needs_edit"] is True)
+    r = c.post("/api/images/1/status", headers=TOOL, json={"needs_edit": True})
+    check("POST flag on a finished image: both marks at once",
+          r.json()["status"] == "reviewed" and r.json()["needs_edit"] is True)
+    r = c.post("/api/images/1/status", headers=TOOL, json={"needs_edit": False})
+    check("POST flag off keeps it finished", r.json()["status"] == "reviewed" and r.json()["needs_edit"] is False)
     r = c.post("/api/images/2/status", headers=TOOL, json={"status": "nope"})
     check(f"POST status: unknown value refused (HTTP {r.status_code})", r.status_code == 400)
+    r = c.post("/api/images/2/status", headers=TOOL, json={"status": "needs_edit"})
+    check(f"POST status: needs_edit is a flag now, not a status (HTTP {r.status_code})", r.status_code == 400)
     r = c.post("/api/images/999/status", headers=TOOL, json={"status": "reviewed"})
     check("POST status: unknown image 404", r.status_code == 404)
     r = c.post("/api/images/1/status", json={"status": "pending"})
     check("POST status without our header refused", r.status_code == 403)
-    pkg = {i["id"]: i["status"] for i in c.get("/api/package").json()["images"]}
-    check("package list shows the three states", pkg == {1: "reviewed", 2: "needs_edit", 3: "pending"})
+    pkg = {i["id"]: (i["status"], i["needs_edit"]) for i in c.get("/api/package").json()["images"]}
+    check("package list shows status and flag per image",
+          pkg == {1: ("reviewed", False), 2: ("pending", True), 3: ("pending", False)})
     prog = next(x for x in c.get("/api/projects").json() if x["id"] == p["id"])["progress"]
-    check("project progress counts done and needs_edit", prog == {"reviewed": 1, "needs_edit": 1, "total": 3})
+    check("project progress counts done and flagged", prog == {"reviewed": 1, "needs_edit": 1, "total": 3})
 
     r = c.post("/api/images/2/review", headers=TOOL, json={"ann_id": 6, "action": "accept"})
-    check("editing a needs_edit image keeps it there", r.json()["status"] == "needs_edit")
+    check("editing a flagged image keeps its marks", r.json()["status"] == "pending" and r.json()["needs_edit"] is True)
 
     # --- who did it ---
     d = c.get("/api/images/1").json()
     check("image detail: who finished it, when, and who edited",
           d["status_by"] == "t" and d["status_at"] and d["editors"] == ["t"])
+    d2 = c.get("/api/images/2").json()
+    check("image detail: who put it on the edit list, when; not finished so no status name",
+          d2["edit_by"] == "t" and d2["edit_at"] and d2["status_by"] is None and d2["needs_edit"] is True)
     check("image detail: untouched image has no names",
           c.get("/api/images/3").json()["status_by"] is None and c.get("/api/images/3").json()["editors"] == [])
     pk = c.get("/api/package").json()
     check("package list carries each image's person and the reviewer's own name",
-          pk["reviewer"] == "t" and {i["id"]: i["status_by"] for i in pk["images"]} == {1: "t", 2: "t", 3: None})
+          pk["reviewer"] == "t" and {i["id"]: i["status_by"] for i in pk["images"]} == {1: "t", 2: None, 3: None})
     lab = c.get("/api/labelers").json()
     check("labelers table: header and one row per image",
           lab["columns"][:3] == ["image", "status", "status_by"] and len(lab["rows"]) == 3
           and lab["rows"][0]["image"] == "img_001.jpg" and lab["rows"][0]["status"] == "reviewed")
 
     pv = c.get("/api/export/edit/preview").json()
-    check("edit preview: the one marked image", pv["images"] == 1 and pv["path"].endswith("_duzenlenecek"))
+    check("edit preview: the one marked image, destination is a dated folder in <package>_duzenlenecek",
+          pv["images"] == 1 and Path(pv["path"]).parent.name.endswith("_duzenlenecek")
+          and Path(pv["path"]).name.startswith("duzenlenecek_"))
     ex = c.post("/api/export/edit", headers=TOOL)
     out = Path(ex.json()["path"])
     check("edit export written", ex.status_code == 200 and (out / "_annotations.coco.json").exists()
@@ -219,6 +251,16 @@ def test_serves_built_web(tmp):
           not any(getattr(r, "name", "") == "web" for r in server.app.routes))
 
 
+def test_port_in_use(tmp):
+    import socket
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        s.listen()
+        port = s.getsockname()[1]
+        check("port_in_use sees a server that is already listening", server.port_in_use(port) is True)
+    check("port_in_use is False once it is free", server.port_in_use(port) is False)
+
+
 def test_cli_package_updates(tmp):
     fresh(tmp)
     pkg = copy_sample(tmp, "cli")
@@ -240,7 +282,7 @@ def main():
     try:
         for t in (test_upload_safety, test_upload_exif, test_upload_annotations_must_match,
                   test_cross_site_requests, test_export_folders, test_image_states_api,
-                  test_serves_built_web, test_cli_package_updates):
+                  test_serves_built_web, test_port_in_use, test_cli_package_updates):
             sub = tmp / t.__name__
             sub.mkdir()
             try:

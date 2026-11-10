@@ -29,9 +29,14 @@ packages/
 projects.json
 projects/
 
-# Default export folders (<package>_export, <package>_export_coco)
+# Export folders: <package>_yolo/, <package>_coco/, <package>_duzenlenecek/ each hold one dated
+# folder per export (older versions wrote <package>_export, _export_coco, _export_duzenlenecek)
+*_yolo/
+*_coco/
+*_exports/
 *_export/
 *_export_coco/
+*_export_duzenlenecek/
 
 # Decisions made while trying the example package (machine-specific)
 example_package/reviews/
