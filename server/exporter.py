@@ -4,6 +4,7 @@ export/
   images/{train,val,test}/<file>     copied images
   labels/{train,val,test}/<stem>.txt one line per object: <class_index> x1 y1 x2 y2 ... (0-1)
   data.yaml                          set folders + class names, same order as package categories
+  labelers.csv                       who finished / changed each photo (see labelers.py)
 """
 import json
 import shutil
@@ -11,6 +12,7 @@ from pathlib import Path
 
 from PIL import Image
 
+import labelers
 import splits
 from package import merge_objects
 
@@ -116,6 +118,18 @@ def export_objects(pkg, store, image_id):
     return [o for o in objects if o["state"] != "deleted"]
 
 
+def left_out(pkg, store):
+    """The images this export does not contain, and why, so nothing is left out unseen:
+    [{id, file_name, unfinished, needs_edit}]. An image can be both."""
+    out = []
+    for image_id, img in pkg.images.items():
+        unfinished = store.status(image_id) != "reviewed"
+        flagged = store.needs_edit(image_id)
+        if unfinished or flagged:
+            out.append({"id": image_id, "file_name": img["file_name"],
+                        "unfinished": unfinished, "needs_edit": flagged})
+    return out
+
 def plan(pkg, store):
     """Work out what an export would write, without touching the disk.
 
@@ -126,17 +140,22 @@ def plan(pkg, store):
     # counted by class index, not name: two categories could share a name
     per_class = [0] * len(pkg.categories)
     summary = {"images": 0, "objects": 0, "empty_images": 0, "untouched_objects": 0,
-               "pending_images": 0, "warnings": []}
+               "pending_images": 0, "needs_edit_images": 0, "warnings": []}
     warn = summary["warnings"].append
     files = []
 
-    reviewed = [img for image_id, img in pkg.images.items() if store.status(image_id) == "reviewed"]
+    # finished images only; a photo flagged "needs edit" goes to the edit export instead,
+    # its labels here would be incomplete
+    reviewed = [img for image_id, img in pkg.images.items()
+                if store.status(image_id) == "reviewed" and not store.needs_edit(image_id)]
     split_by_image, units_per_split, split_warnings = splits.assign(reviewed)
     per_split = {s: {"images": 0, "objects": 0, "units": units_per_split[s]} for s in splits.SPLITS}
 
     for image_id, img in pkg.images.items():
         if image_id not in split_by_image:
-            summary["pending_images"] += 1
+            # two separate reasons (an image can be both): not finished, flagged for editing
+            summary["pending_images"] += store.status(image_id) != "reviewed"
+            summary["needs_edit_images"] += store.needs_edit(image_id)
             continue
         split = split_by_image[image_id]
         name, width, height = img["file_name"], img["width"], img["height"]
@@ -184,6 +203,7 @@ def plan(pkg, store):
     summary["per_class"] = [{"index": i, "name": c["name"], "count": per_class[i]}
                             for i, c in enumerate(pkg.categories)]
     summary["splits"] = per_split
+    summary["left_out"] = left_out(pkg, store)
     summary["warnings"] = split_warnings + summary["warnings"]
     if reviewed and not per_split["val"]["images"]:
         summary["warnings"].append("data.yaml'da doğrulama (val) yerine eğitim kümesi yazıldı: "
@@ -206,45 +226,55 @@ def build(pkg, store, out_dir):
         (out_dir / "labels" / split / f"{Path(name).stem}.txt").write_text(
             "".join(line + "\n" for line in lines), encoding="utf-8")
         shutil.copy2(src, out_dir / "images" / split / name)
+    # who finished / changed each photo in this dataset
+    names = {name for _, name, _, _ in files}
+    ids = [i for i, img in pkg.images.items() if img["file_name"] in names]
+    (out_dir / "labelers.csv").write_text(labelers.to_csv(labelers.rows(pkg, store, ids)), encoding="utf-8")
     return summary
 
 
 def preview(pkg, store, target):
-    """What export() would write, and where; nothing is written."""
+    """What export() would write, and where (target is the folder name pattern, the
+    real one gets the date and time); nothing is written."""
     _, summary = plan(pkg, store)
-    summary["path"] = str(Path(target).resolve())
+    summary["path"] = str(target)
     return summary
 
 
 def export(pkg, store, target):
-    """Build into a temp folder, then swap it in, so a failed export never
-    leaves a half-written dataset and old files never linger."""
+    """Write the dataset into a NEW folder: target must not exist (see create_folder)."""
+    return create_folder(target, lambda tmp: build(pkg, store, tmp))
+
+
+def create_folder(target, build_into):
+    """build_into(tmp) writes a whole folder (carrying MARKER) and returns a summary.
+    The folder is built next to the target and renamed into place, so a failed export
+    leaves no half-written folder. Never overwrites and never deletes an export: an
+    existing target is refused. Every export goes into its own, dated folder (see
+    export_folders.py), so an earlier export can never lose files. Shared by the YOLO,
+    COCO and "needs editing" exports."""
     target = Path(target).resolve()
-    if target.exists() and any(target.iterdir()) and not (target / MARKER).exists():
-        raise ExportError(f"{target} bu aracın oluşturduğu bir klasör değil, üzerine yazılmadı")
+    if target.exists():
+        raise ExportError(f"{target} zaten var, üzerine yazılmadı")
+    target.parent.mkdir(parents=True, exist_ok=True)
 
     tmp = target.with_name(target.name + ".tmp")
-    old = target.with_name(target.name + ".old")
-    for leftover in (tmp, old):
-        if leftover.exists():
-            shutil.rmtree(leftover)
+    if tmp.exists():  # left by a crash of an earlier export; only ours is removed
+        if not (tmp / MARKER).exists():
+            raise ExportError(f"{tmp} bu aracın oluşturduğu bir klasör değil, dokunulmadı")
+        shutil.rmtree(tmp)
 
     try:
-        summary = build(pkg, store, tmp)
+        summary = build_into(tmp)
     except Exception:
         shutil.rmtree(tmp, ignore_errors=True)
         raise
 
     try:
-        if target.exists():
-            target.rename(old)
         tmp.rename(target)
     except OSError as e:
-        if old.exists() and not target.exists():
-            old.rename(target)  # put the previous export back
         shutil.rmtree(tmp, ignore_errors=True)
-        raise ExportError(f"export klasörü değiştirilemedi (bir dosyası açık olabilir): {e}")
-    shutil.rmtree(old, ignore_errors=True)
+        raise ExportError(f"export klasörü oluşturulamadı (bir dosyası açık olabilir): {e}")
 
     summary["path"] = str(target)
     return summary

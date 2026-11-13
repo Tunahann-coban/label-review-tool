@@ -79,7 +79,10 @@ export default function HomePage({ onSelectProject }) {
 
       <div className="home-content">
         <div className="home-header">
-          <h2 className="home-heading">Projeler</h2>
+          <div className="home-title">
+            <h1 className="home-heading">Projeler</h1>
+            <p className="muted">Bir paketi aç, etiketleri incele, YOLO ya da COCO olarak dışa aktar.</p>
+          </div>
           <div className="home-actions">
             <button
               onClick={() => { setShowAddForm((v) => !v); setShowCreateDialog(false) }}
@@ -99,11 +102,13 @@ export default function HomePage({ onSelectProject }) {
         )}
 
         {loading ? (
-          <p className="muted home-empty">Yükleniyor...</p>
+          <p className="muted home-loading">Yükleniyor...</p>
         ) : projects.length === 0 ? (
-          <p className="muted home-empty">
-            Henüz proje yok — bir klasör ekle veya görsel yükle.
-          </p>
+          <div className="home-empty">
+            <EmptySticker />
+            <p>Henüz proje yok. Bir klasör ekle ya da görsel yükle.</p>
+            <button className="primary" onClick={() => setShowAddForm(true)}>+ Klasör ekle</button>
+          </div>
         ) : (
           <ul className="project-list">
             {projects.map((p) => (
@@ -139,7 +144,7 @@ function ProjectCard({ project, activating, onOpen, onDelete }) {
       <div className="project-card-info">
         <div className="project-card-name">
           {project.name}
-          {project.is_active && <span className="badge">aktif</span>}
+          {project.is_active && <span className="badge badge-info">aktif</span>}
           {!project.valid && <span className="badge badge-warn">hatalı</span>}
         </div>
         <div className="project-card-path" title={project.path}>{project.path}</div>
@@ -153,7 +158,10 @@ function ProjectCard({ project, activating, onOpen, onDelete }) {
         <div className="progress-bar">
           <div className="progress-fill" style={{ width: `${pct}%` }} />
         </div>
-        <span className="project-card-stat">{reviewed} / {total} incelendi</span>
+        <span className="project-card-stat">
+          {reviewed} / {total} tamamlandı
+          {project.progress.needs_edit > 0 && <> · {project.progress.needs_edit} düzenlenecek</>}
+        </span>
       </div>
 
       <div className="project-card-actions">
@@ -165,6 +173,31 @@ function ProjectCard({ project, activating, onOpen, onDelete }) {
           disabled={activating}>✕</button>
       </div>
     </li>
+  )
+}
+
+// Sticker for the empty state (DESIGN.md section 6): flat brand colors, white die-cut
+// outline, slight tilt. A cardboard box with a detection box and label tag.
+function EmptySticker() {
+  const box = 'M30 52 L80 32 L130 52 L130 104 L80 124 L30 104 Z'
+  return (
+    <svg className="sticker" width="160" height="136" viewBox="0 0 160 136" aria-hidden="true">
+      <g transform="rotate(-6 80 68)">
+        <g fill="#fff" stroke="#fff" strokeWidth="10" strokeLinejoin="round">
+          <path d={box} />
+          <rect x="30" y="8" width="100" height="26" rx="13" />
+        </g>
+        <path d="M30 52 L80 72 L80 124 L30 104 Z" fill="#d2a26b" />
+        <path d="M80 72 L130 52 L130 104 L80 124 Z" fill="#c48f58" />
+        <path d="M30 52 L80 32 L130 52 L80 72 Z" fill="#efccaa" />
+        <path d="M66 42 L90 52 L80 56 L56 46 Z" fill="#d8531e" />
+        <rect x="38" y="62" width="84" height="50" rx="4" fill="none" stroke="#1f3146" strokeWidth="3"
+          strokeDasharray="7 5" />
+        <rect x="30" y="8" width="100" height="26" rx="13" fill="#1f3146" />
+        <text x="80" y="25.5" textAnchor="middle" fontSize="11" fontWeight="600" fill="#fff"
+          fontFamily="Inter, system-ui, sans-serif">box · 0.92</text>
+      </g>
+    </svg>
   )
 }
 

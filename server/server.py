@@ -10,6 +10,10 @@ import argparse
 import io
 import json
 import shutil
+import socket
+import sys
+import threading
+import webbrowser
 from pathlib import Path
 from typing import List
 from urllib.parse import urlsplit
@@ -17,11 +21,15 @@ from urllib.parse import urlsplit
 import uvicorn
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.staticfiles import StaticFiles
 from PIL import Image as PillowImage, ImageOps
 from pydantic import BaseModel
 
 import coco_exporter
+import edit_exporter
+import export_folders
 import exporter
+import labelers
 from package import Package, merge_objects
 from project_registry import ProjectRegistry, slugify
 from review_store import ReviewError, ReviewStore
@@ -75,6 +83,12 @@ class Decision(BaseModel):
     candidate_id: int | None = None
 
 
+class StatusChange(BaseModel):
+    """Either or both; whatever is left out stays as it is."""
+    status: str | None = None        # "pending" | "reviewed" (tamamlandı)
+    needs_edit: bool | None = None   # "Düzenlenecekler'e ekle" on / off
+
+
 def get_active() -> ActiveProject:
     if active is None:
         raise HTTPException(503, "aktif proje yok — ana sayfadan bir proje seç")
@@ -91,6 +105,12 @@ def image_detail(pkg, store, image_id):
     return {
         "image": pkg.images[image_id],
         "status": review["status"] if review else "pending",
+        "needs_edit": bool(review and review.get("needs_edit")),
+        "status_by": (review or {}).get("status_by"),
+        "status_at": (review or {}).get("status_at"),
+        "edit_by": (review or {}).get("edit_by"),
+        "edit_at": (review or {}).get("edit_at"),
+        "editors": labelers.editors_of(review),
         "objects": merge_objects(pkg.annotations.get(image_id, []), review),
         "candidates": pkg.candidates.get(image_id, []),
     }
@@ -101,11 +121,13 @@ def _project_with_progress(project: dict) -> dict:
         pkg = Package(project["path"])
         store = ReviewStore(pkg, project["reviewer"])
         total = len(pkg.images)
-        reviewed = sum(1 for img_id in pkg.images if store.status(img_id) == "reviewed")
+        statuses = [store.status(img_id) for img_id in pkg.images]
         return {
             **project,
             "is_active": registry.get_active_id() == project["id"],
-            "progress": {"reviewed": reviewed, "total": total},
+            "progress": {"reviewed": statuses.count("reviewed"),
+                         "needs_edit": sum(1 for img_id in pkg.images if store.needs_edit(img_id)),
+                         "total": total},
             "valid": True,
             "error": None,
         }
@@ -113,7 +135,7 @@ def _project_with_progress(project: dict) -> dict:
         return {
             **project,
             "is_active": registry.get_active_id() == project["id"],
-            "progress": {"reviewed": 0, "total": 0},
+            "progress": {"reviewed": 0, "needs_edit": 0, "total": 0},
             "valid": False,
             "error": str(e),
         }
@@ -140,10 +162,14 @@ def default_export_dir(package_path):
     return str(p.parent / f"{p.name}_export")
 
 
-def coco_dir(export_dir):
-    """COCO goes beside the YOLO folder, not into it: a YOLO export replaces its whole folder."""
-    return str(Path(export_dir).resolve()) + "_coco"
+def export_target(a, kind):
+    """A new dated folder for this export (never an existing one)."""
+    return export_folders.new_folder(a.export_dir, kind)
 
+
+def export_pattern(a, kind):
+    """What the preview shows as the destination: the folder name with a stamp for the time."""
+    return export_folders.pattern(a.export_dir, kind)
 
 def register_cli_package(path, reviewer, export_dir):
     """--package: register the folder, or update it; the command-line values win."""
@@ -160,11 +186,21 @@ def register_cli_package(path, reviewer, export_dir):
 @app.get("/api/package")
 def package_info():
     a = get_active()
-    images = [
-        {"id": img["id"], "file_name": img["file_name"], "status": a.store.status(img["id"])}
-        for img in a.pkg.images.values()
-    ]
-    return {"categories": a.pkg.categories, "images": images}
+    images = []
+    for img in a.pkg.images.values():
+        review = a.store.load(img["id"])
+        images.append({"id": img["id"], "file_name": img["file_name"],
+                       "status": review["status"] if review else "pending",
+                       "needs_edit": bool(review and review.get("needs_edit")),
+                       "status_by": (review or {}).get("status_by")})
+    return {"categories": a.pkg.categories, "images": images, "reviewer": a.store.reviewer}
+
+
+@app.get("/api/labelers")
+def labelers_table():
+    """Who finished / changed each photo (the same table the exports write as labelers.csv)."""
+    a = get_active()
+    return {"columns": labelers.COLUMNS, "rows": labelers.rows(a.pkg, a.store)}
 
 
 @app.get("/api/images/{image_id}")
@@ -181,6 +217,32 @@ def image_file(image_id: int):
     return FileResponse(a.pkg.image_path(image_id))
 
 
+@app.get("/api/images/{image_id}/thumb")
+def image_thumb(image_id: int, request: Request):
+    """Small JPEG for the image list. The browser re-checks it by ETag every time,
+    because image ids repeat from project to project."""
+    a = get_active()
+    get_image_or_404(a.pkg, image_id)
+    path = a.pkg.image_path(image_id)
+    try:
+        stat = path.stat()
+    except OSError:
+        raise HTTPException(404, f"image {image_id}: dosya yok")
+    etag = f'"{stat.st_mtime_ns}-{stat.st_size}"'
+    headers = {"ETag": etag, "Cache-Control": "no-cache"}
+    if request.headers.get("if-none-match") == etag:
+        return Response(status_code=304, headers=headers)
+    try:
+        with PillowImage.open(path) as im:
+            small = ImageOps.exif_transpose(im).convert("RGB")
+            small.thumbnail((240, 240))
+            buf = io.BytesIO()
+            small.save(buf, "JPEG", quality=80)
+    except Exception:
+        raise HTTPException(404, f"image {image_id}: açılamadı")
+    return Response(buf.getvalue(), media_type="image/jpeg", headers=headers)
+
+
 @app.post("/api/images/{image_id}/review")
 def save_review(image_id: int, decision: Decision):
     a = get_active()
@@ -192,13 +254,29 @@ def save_review(image_id: int, decision: Decision):
     return image_detail(a.pkg, a.store, image_id)
 
 
-# ── YOLO export ────────────────────────────────────────────────────────────
+@app.post("/api/images/{image_id}/status")
+def set_status(image_id: int, change: StatusChange):
+    """Tamamlandı / back to pending, and / or add to / remove from the edit list.
+    Object decisions are kept."""
+    a = get_active()
+    get_image_or_404(a.pkg, image_id)
+    try:
+        a.store.set_marks(image_id, status=change.status, needs_edit=change.needs_edit)
+    except ReviewError as e:
+        raise HTTPException(400, str(e))
+    return image_detail(a.pkg, a.store, image_id)
+
+
+# ── exports ────────────────────────────────────────────────────────────────
+# Every export goes into a NEW dated folder inside the big folder of its kind (export_folders.py);
+# nothing is ever overwritten. The preview shows the folder name with a time stamp pattern,
+# the real export returns the real folder in "path".
 
 @app.get("/api/export/preview")
 def export_preview():
     a = get_active()
     with a.store.lock:
-        return exporter.preview(a.pkg, a.store, a.export_dir)
+        return exporter.preview(a.pkg, a.store, export_pattern(a, "yolo"))
 
 
 @app.post("/api/export")
@@ -206,26 +284,45 @@ def do_export():
     a = get_active()
     with a.store.lock:
         try:
-            return exporter.export(a.pkg, a.store, a.export_dir)
+            return exporter.export(a.pkg, a.store, export_target(a, "yolo"))
         except exporter.ExportError as e:
             raise HTTPException(409, str(e))
 
-
-# ── COCO export ────────────────────────────────────────────────────────────
 
 @app.get("/api/export/coco/preview")
 def coco_preview():
     a = get_active()
     with a.store.lock:
-        return coco_exporter.preview_coco(a.pkg, a.store, coco_dir(a.export_dir))
+        return coco_exporter.preview_coco(a.pkg, a.store, export_pattern(a, "coco"))
 
 
 @app.post("/api/export/coco")
 def do_coco_export():
     a = get_active()
     with a.store.lock:
-        return coco_exporter.export_coco(a.pkg, a.store, coco_dir(a.export_dir))
+        try:
+            return coco_exporter.export_coco(a.pkg, a.store, export_target(a, "coco"))
+        except exporter.ExportError as e:
+            raise HTTPException(409, str(e))
 
+
+# images flagged "needs editing" (photos + current masks, for Roboflow)
+
+@app.get("/api/export/edit/preview")
+def edit_preview():
+    a = get_active()
+    with a.store.lock:
+        return edit_exporter.preview(a.pkg, a.store, export_pattern(a, "duzenlenecek"))
+
+
+@app.post("/api/export/edit")
+def do_edit_export():
+    a = get_active()
+    with a.store.lock:
+        try:
+            return edit_exporter.export(a.pkg, a.store, export_target(a, "duzenlenecek"))
+        except exporter.ExportError as e:
+            raise HTTPException(409, str(e))
 
 # ── project management ─────────────────────────────────────────────────────
 
@@ -374,6 +471,29 @@ def delete_project(project_id: str):
     return Response(status_code=204)
 
 
+# ── the web page itself ────────────────────────────────────────────────────
+# With web/dist built (npm run build), this service also serves the page, so the tool
+# runs as one program: baslat.bat / baslat.sh. In development Vite serves it instead.
+# Added last: the /api routes above always win.
+
+WEB_DIST = Path(__file__).resolve().parent.parent / "web" / "dist"
+
+
+def port_in_use(port):
+    """True when something already listens on 127.0.0.1:port (an older copy of the tool, usually)."""
+    with socket.socket() as s:
+        s.settimeout(0.5)
+        return s.connect_ex(("127.0.0.1", port)) == 0
+
+
+def mount_web(dist=WEB_DIST, target=None):
+    target = target or app
+    if (Path(dist) / "index.html").exists():
+        target.mount("/", StaticFiles(directory=dist, html=True), name="web")
+        return True
+    return False
+
+
 # ── startup ────────────────────────────────────────────────────────────────
 
 def main():
@@ -388,7 +508,13 @@ def main():
     parser.add_argument("--projects-dir", default="projects", dest="projects_dir",
                         help="root folder for newly uploaded projects")
     parser.add_argument("--port", type=int, default=8000)
+    parser.add_argument("--open", action="store_true",
+                        help="open the page in the browser once the service is up (needs web/dist)")
     args = parser.parse_args()
+
+    if port_in_use(args.port):
+        sys.exit(f"HATA: {args.port} portu dolu. Aracın başka bir penceresi hâlâ açık olabilir: onu kapat,"
+                 f" ya da baslat.bat kullan (eski kopyayı kendisi kapatır). Eski sayfa açılmasın diye bu kopya başlatılmadı.")
 
     registry = ProjectRegistry(args.registry)
     projects_root = args.projects_dir
@@ -415,6 +541,14 @@ def main():
                     print(f"uyarı: aktif proje yüklenemedi ({e}), ana sayfa boş açılacak", flush=True)
         else:
             print("aktif proje yok — ana sayfadan bir proje seç veya --package ile başlat", flush=True)
+
+    served = mount_web()
+    if served:
+        print(f"page: http://localhost:{args.port}", flush=True)
+        if args.open:
+            threading.Timer(1.5, webbrowser.open, args=(f"http://localhost:{args.port}",)).start()
+    elif args.open:
+        print("uyarı: web/dist yok, sayfa açılmadı (npm run build ya da baslat.bat)", flush=True)
 
     uvicorn.run(app, host="127.0.0.1", port=args.port)
 

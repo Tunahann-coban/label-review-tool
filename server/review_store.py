@@ -7,6 +7,17 @@ from pathlib import Path
 
 ACTIONS = ("accept", "change", "delete", "add")
 
+# Two separate marks on an image:
+#   status      "pending" (not finished) or "reviewed" ("tamamlandı": the reviewer pressed
+#               "Tamamlandı olarak işaretle")
+#   needs_edit  a flag, independent of status: "Düzenlenecekler'e ekle". The photo goes
+#               to the edit export (Roboflow) instead of the YOLO / COCO exports, whether
+#               or not it is also marked done.
+# Object decisions change neither.
+STATUSES = ("pending", "reviewed")
+# status_by / status_at: who set the status and when; edit_by / edit_at: same for the flag
+MARK_FIELDS = ("status_by", "status_at", "needs_edit", "edit_by", "edit_at")
+
 
 def now():
     return datetime.now().isoformat(timespec="seconds")
@@ -39,11 +50,28 @@ class ReviewStore:
         if not p.exists():
             return None
         with open(p, encoding="utf-8") as f:
-            return json.load(f)
+            return self._normalize(json.load(f))
+
+    @staticmethod
+    def _normalize(review):
+        """Files written while "needs_edit" was a third status: it is a flag now, and
+        such an image is simply not finished."""
+        if review.get("status") == "needs_edit":
+            review["status"] = "pending"
+            review["needs_edit"] = True
+            if "status_by" in review:
+                review["edit_by"] = review.pop("status_by")
+            if "status_at" in review:
+                review["edit_at"] = review.pop("status_at")
+        return review
 
     def status(self, image_id):
         review = self.load(image_id)
         return review["status"] if review else "pending"
+
+    def needs_edit(self, image_id):
+        review = self.load(image_id)
+        return bool(review and review.get("needs_edit"))
 
     def _write(self, image_id, review):
         # Write to a temp file, then swap: a crash never leaves a half-written file.
@@ -71,6 +99,10 @@ class ReviewStore:
 
         with self.lock:
             review = self.load(image_id) or {"image_id": image_id, "objects": [], "log": []}
+            # Editing never changes the image's marks: only set_marks does. A reviewed or
+            # flagged image stays as it is while the reviewer keeps fixing it.
+            status = review.get("status", "pending")
+            marks = self._marks(review)
             entries = {o["ann_id"]: o for o in review["objects"]}
 
             if action == "add":
@@ -87,14 +119,96 @@ class ReviewStore:
             # same field order as the README example, easier to read by hand
             review = {
                 "image_id": image_id,
-                "status": "reviewed",
+                "status": status,
                 "reviewer": self.reviewer,
                 "updated": now(),
+                **marks,
                 "objects": list(entries.values()),
-                "log": review["log"] + [{"t": now(), "ann_id": ann_id, **log, "prev": prev}],
+                # "by": who made this change (the reviewer's name at that moment)
+                "log": review["log"] + [{"t": now(), "by": self.reviewer, "ann_id": ann_id, **log,
+                                         "prev": prev}],
             }
             self._write(image_id, review)
             return review
+
+    @staticmethod
+    def _marks(review):
+        """The marks a file already has (who set them and when). Files written before
+        names were kept simply lack some of these; they are left as they are."""
+        return {k: review[k] for k in MARK_FIELDS if k in review}
+
+    def set_marks(self, image_id, status=None, needs_edit=None):
+        """Change the image's status and / or its "needs edit" flag; None leaves one as it is.
+        Decisions on its objects are kept. Returns the review (None if there was nothing
+        to write: no change on an image that has no file)."""
+        if status is not None and status not in STATUSES:
+            raise ReviewError(f"unknown status: {status}")
+        if needs_edit is not None and not isinstance(needs_edit, bool):
+            raise ReviewError(f"needs_edit must be true or false: {needs_edit!r}")
+        with self.lock:
+            review = self.load(image_id)
+            old_status = review.get("status", "pending") if review else "pending"
+            old_flag = bool(review and review.get("needs_edit"))
+            new_status = old_status if status is None else status
+            new_flag = old_flag if needs_edit is None else needs_edit
+            if (new_status, new_flag) == (old_status, old_flag):
+                return review
+            base = review or {"image_id": image_id, "objects": [], "log": []}
+            marks, log, t = self._marks(base), list(base["log"]), now()
+            objects = list(base["objects"])
+            if new_status != old_status:
+                log.append({"t": t, "by": self.reviewer, "action": "status", "from": old_status, "to": new_status})
+                marks.update(status_by=self.reviewer, status_at=t)
+                if new_status == "reviewed":
+                    objects = self._auto_accept(image_id, objects, log, t)
+                elif old_status == "reviewed":
+                    objects = self._undo_auto_accept(objects, log, t)
+            if new_flag != old_flag:
+                log.append({"t": t, "by": self.reviewer, "action": "flag", "from": old_flag, "to": new_flag})
+                marks.update(needs_edit=new_flag, edit_by=self.reviewer, edit_at=t)
+            review = {
+                "image_id": image_id,
+                "status": new_status,
+                "reviewer": self.reviewer,
+                "updated": t,
+                # same order as MARK_FIELDS, easier to read by hand
+                **{k: marks[k] for k in MARK_FIELDS if k in marks},
+                "objects": objects,
+                "log": log,
+            }
+            self._write(image_id, review)
+            return review
+
+    def _auto_accept(self, image_id, objects, log, t):
+        """Finishing an image means its untouched objects are accepted as the pipeline
+        gave them. They are marked auto_accepted, so taking the image back to pending can
+        undo exactly these and leave the reviewer's own decisions alone."""
+        decided = {o["ann_id"] for o in objects}
+        out = list(objects)
+        for ann in self.pkg.annotations.get(image_id, []):
+            if ann["id"] not in decided:
+                out.append({"ann_id": ann["id"], "category_id": ann["category_id"],
+                            "state": "accepted", "auto_accepted": True})
+                log.append({"t": t, "by": self.reviewer, "ann_id": ann["id"], "action": "accept",
+                            "auto": True, "prev": None})
+        return out
+
+    def _undo_auto_accept(self, objects, log, t):
+        # an object the reviewer touched later was written without the mark, so it stays
+        out = []
+        for o in objects:
+            if o.get("auto_accepted"):
+                log.append({"t": t, "by": self.reviewer, "ann_id": o["ann_id"], "action": "unaccept",
+                            "auto": True, "prev": o})
+            else:
+                out.append(o)
+        return out
+
+    def set_status(self, image_id, status):
+        return self.set_marks(image_id, status=status)
+
+    def set_needs_edit(self, image_id, flag):
+        return self.set_marks(image_id, needs_edit=flag)
 
     def _add(self, image_id, entries, candidate_id, category_id):
         cand = next((c for c in self.pkg.candidates.get(image_id, []) if c["id"] == candidate_id), None)

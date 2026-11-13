@@ -18,6 +18,17 @@ async function request(path, options = {}) {
 export const fetchPackage = () => request('/api/package')
 export const fetchImage = (id) => request(`/api/images/${id}`)
 export const imageFileUrl = (id) => `/api/images/${id}/file`
+export const imageThumbUrl = (id) => `/api/images/${id}/thumb`
+
+// marks: { status?: 'pending' | 'reviewed' (tamamlandı), needs_edit?: true | false (the edit
+// list) }. Either or both; what is left out stays. Object decisions are kept.
+// Returns the updated image detail.
+export const postMarks = (id, marks) =>
+  request(`/api/images/${id}/status`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(marks),
+  })
 
 // What an export would write; nothing is written.
 export const fetchExportPreview = () => request('/api/export/preview')
@@ -38,6 +49,10 @@ export const postReview = (id, decision) =>
 // COCO export
 export const fetchCOCOExportPreview = () => request('/api/export/coco/preview')
 export const postCOCOExport = () => request('/api/export/coco', { method: 'POST' })
+
+// Images marked "needs edit": photos + current masks in one folder, for Roboflow
+export const fetchEditExportPreview = () => request('/api/export/edit/preview')
+export const postEditExport = () => request('/api/export/edit', { method: 'POST' })
 
 // Project management
 export const fetchProjects = () => request('/api/projects')

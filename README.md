@@ -46,7 +46,7 @@ etiket-araci/
     annotations.json
     reviews/                   (araç oluşturur)
       img_001.json
-  export/                      (dışa aktarma buraya yazar)
+  <paket>_yolo/ _coco/ _duzenlenecek/   (dışa aktarma buraya yazar: her türün kendi büyük klasörü, içinde her seferinde yeni tarihli klasör)
     images/ labels/ data.yaml
 ```
 
@@ -76,9 +76,11 @@ Tüm koordinatlar **piksel** cinsinden. Maske, çokgen noktalarının düz liste
 - `annotations`: hattın bulduğu nesneler.
 - `candidates`: hattın seçmediği ama SAM2'nin otomatik bulduğu parçalar. Etiketi yoktur.
 - Sınıf listesini koda gömme, her zaman `categories` içinden oku. Listede `unknown` adlı bir sınıf olabilir.
-- Gerçek paketi Gölge sonradan verecek. `make_sample_data.py` aynı biçimde sahte bir paket üretir, geliştirmeyi onunla yap.
+- Gerçek paketi ekip sonradan verecek. `make_sample_data.py` aynı biçimde sahte bir paket üretir, geliştirmeyi onunla yap.
 
 ### 5.2 Karar dosyası: `reviews/<resim_adı>.json`
+
+Kim ne yaptı kayıt altındadır: `log` satırlarındaki `by` o değişikliği yapanın adı, `status_by` / `status_at` resmi şu duruma (tamamlandı, düzenlenecek) kimin ve ne zaman getirdiği. `reviewer` yalnızca dosyayı en son kaydeden kişidir. Her dışa aktarma klasörüne `labelers.csv` yazılır (resim, durum, tamamlayan, tarih, düzenleyenler, değişiklik sayısı, son kayıt). Adların yazılmadığı eski kayıtlarda `status_by` yoktur, düzenleyen "(eski kayıt)" diye gösterilir.
 
 Resim başına bir dosya. Kullanıcı bir şey değiştirdikçe güncellenir.
 
@@ -101,7 +103,7 @@ Resim başına bir dosya. Kullanıcı bir şey değiştirdikçe güncellenir.
 }
 ```
 
-- `status`: `pending` (bekliyor) ya da `reviewed` (incelendi).
+- `status`: `pending` (bekliyor) ya da `reviewed` (tamamlandı). Bundan ayrı bir işaret olarak `needs_edit` (`true`/`false`): resim Roboflow gibi bir araçta elle maske/etiket eklenmek üzere **düzenlenecekler listesine** eklenmiştir. İkisi birbirinden bağımsızdır, bir resim hem tamamlanmış hem listede olabilir. Listedeki resimler YOLO/COCO dışa aktarmaya girmez, ayrı `<paket>_export_duzenlenecek` klasörüne gider. Nesne kararları ikisini de değiştirmez, yalnızca **Tamamlandı olarak işaretle** (`T`) ve **Düzenlenecekler'e ekle** (`D`) düğmeleri değiştirir.
 - `state`: `auto` (dokunulmadı), `accepted`, `changed`, `deleted`, `added`.
 - `log` değişiklik geçmişidir, geri almak için kullanılır.
 - Resim hiç incelenmediyse dosya yoktur ve durum `pending`'dir.
@@ -114,7 +116,7 @@ Resim başına bir dosya. Kullanıcı bir şey değiştirdikçe güncellenir.
 | GET | `/api/images/{id}` | Resim bilgisi, nesneler (karar dosyasıyla birleştirilmiş), adaylar |
 | GET | `/api/images/{id}/file` | Resim dosyası |
 | POST | `/api/images/{id}/review` | Kararları kaydeder (`reviews/` içine yazar) |
-| POST | `/api/export` | İncelenen resimleri YOLO-seg olarak `export/` içine yazar |
+| POST | `/api/export` | Tamamlanan resimleri YOLO-seg olarak `<paket>_yolo/yolo_<tarih-saat>/` içine yazar (her seferinde yeni klasör, eskisi silinmez) |
 
 ## 7. Arayüz davranışı
 
@@ -123,12 +125,12 @@ Resim başına bir dosya. Kullanıcı bir şey değiştirdikçe güncellenir.
 - **İşlem:** Seçili nesne için üç düğme: Onayla, Sınıfı değiştir (açılır liste), Sil. Klavye kısayolları olsun (örn. `Enter` onayla, `Del` sil, `N` sonraki resim).
 - **Şüpheliler:** Güven skoru eşiğin altında olanlar ve sınıfı `unknown` olanlar listenin başında, "şüpheli" rozetiyle. Eşik arayüzde bir kaydırıcı, varsayılan 0,5.
 - **Aday maskeler:** Bir düğmeyle açılır/kapanır. Açılınca resim üstünde adaylar çizgiyle görünür. Birine tıklayınca sınıf seçtirilir ve listeye yeni nesne olarak eklenir.
-- **Resim durumu:** İşlem yapılan resim otomatik "incelendi" olur. "Sıradaki bekleyen" düğmesi bekleyen ilk resme atlar.
+- **Resim durumu:** Resmin altında büyük bir durum çubuğu vardır (Bekliyor / Tamamlandı, ve varsa "düzenlenecekler listesinde"). Sağında iki düğme: **Düzenlenecekler'e ekle** (`D`) ve **Tamamlandı olarak işaretle** (`T`). İkisi de açılıp kapanır, basılıyken belli olur, tekrar basınca geri alınır. Tamamlandı'ya basınca resimdeki dokunulmamış nesneler otomatik onaylanır (geri alınırsa onlar da geri alınır) ve sıradaki bekleyen resim açılır. Önceki / Sonraki ve **Bekleyene geç** düğmeleri resmin hemen üstündedir (`P` `N` `B`). Sağdaki **Resimler** sekmesinde gruplar (Tümü / Bekleyen / Tamamlanan / Düzenlenecek) küçük resimli liste olarak görünür; hangi grupta olursa olsun bir resim açılıp yeniden düzeltilebilir. "Sıradaki bekleyen" düğmesi bekleyen ilk resme atlar.
 - **Her işlem anında kaydedilir.** Sayfa kapanıp açılınca kararlar yerinde olmalı.
 
 ## 8. Dışa aktarma (YOLO-seg)
 
-Sadece `reviewed` resimler, silinen nesneler hariç. Her resim için `export/labels/<resim>.txt`, her satır bir nesne:
+Sadece `reviewed` (tamamlandı) resimler, düzenlenecekler listesindekiler ve silinen nesneler hariç. **Her dışa aktarma yeni bir klasör açar** (`<paket>_yolo/yolo_2026-11-10_23-45-12`; COCO `<paket>_coco/`, düzenlenecekler `<paket>_duzenlenecek/` altına gider, türler karışmaz), önceki dışa aktarmalar hiç silinmez ya da üzerine yazılmaz. Pencere, dışarıda kalan resimleri adlarıyla ve nedeniyle (tamamlanmadı / düzenlenecekler listesinde) gösterir. Her resim için `labels/<resim>.txt`, her satır bir nesne:
 
 ```
 <sınıf_no> x1 y1 x2 y2 x3 y3 ...
@@ -136,12 +138,12 @@ Sadece `reviewed` resimler, silinen nesneler hariç. Her resim için `export/lab
 
 - `sınıf_no`: `categories` sırasına göre 0'dan başlayan numara.
 - Koordinatlar resim genişliğine ve yüksekliğine bölünmüş, 0–1 arası.
-- Resimler `export/images/` içine kopyalanır.
-- `export/data.yaml` içinde `names:` listesi (sınıf adları, sıra aynı) bulunur.
+- Resimler `images/` içine kopyalanır.
+- `data.yaml` içinde `names:` listesi (sınıf adları, sıra aynı) bulunur.
 
 ## 9. Adımlar
 
-Her adımı bitirince çalıştığını kontrol et ve Gölge'ye göster, sonra sonrakine geç. Her adım küçük tutuldu. Takılırsan Gölge'ye yaz.
+Her adımı bitirince çalıştığını kontrol et ve ekibe göster, sonra sonrakine geç. Her adım küçük tutuldu. Takılırsan ekibe yaz.
 
 | Adım | İş | Bitti sayılır |
 |---|---|---|
@@ -156,7 +158,7 @@ Her adımı bitirince çalıştığını kontrol et ve Gölge'ye göster, sonra 
 | 8 | Aday maskeler: göster, tıkla, sınıf ver, ekle | Yeni nesne listeye eklenip kaydediliyor ve dışa aktarmaya giriyor |
 | 9 | (İsteğe bağlı, sonraya) | — |
 
-Önerilen kontrol: adım 2'den sonra, adım 4'ten sonra ve adım 7'den sonra Gölge'ye ekran görüntüsü at.
+Önerilen kontrol: adım 2'den sonra, adım 4'ten sonra ve adım 7'den sonra ekibe ekran görüntüsü at.
 
 ## 10. Yapay zekâ asistanı için notlar
 

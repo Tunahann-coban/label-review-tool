@@ -27,7 +27,7 @@ PART3_MD = """## Bölüm 3: Paket üret (etiket inceleme aracı için)
 - **Her sınıf ayrı sorulur.** Bütün sınıfları tek metinde vermek etiketleri karıştırıyor
   ("large appliance small appliance"). `predict_with_classes()` bunu çözmüyor, çünkü o da tek metin kullanıyor.
 - Aynı nesne iki kez bulunursa (kutular ya da maskeler neredeyse aynıysa) yüksek skorlu olan kalır.
-- Adaylardan kırıntılar (resmin %0,5'inden küçük), duvar büyüklüğündekiler (%30'dan büyük) ve birbirinin kopyaları atılır. Fotoğraf başına en fazla 20 aday kalır.
+- Adaylardan kırıntılar (resmin %0,2'sinden küçük), duvar büyüklüğündekiler (%45'ten büyük) ve birbirinin kopyaları atılır. Fotoğraf başına en fazla 40 aday kalır (ayarlar bir sonraki hücrede).
 - Maskeler sadeleştirilmiş çokgenlere çevrilir.
 - SAM 2'nin otomatik maskelerinden, bulunan nesnelerle çakışmayanlar **aday** olur.
 - Fotoğraflar telefonun döndürme notuna (EXIF) göre düzeltilir. Modeller ve araç aynı resmi görür.
@@ -40,9 +40,19 @@ RUN = f'''# ---------------- Ayarlar ----------------
 IMAGE_DIR = "@@IMAGE_DIR@@"
 MAX_IMAGES = @@MAX_IMAGES@@          # None: hepsi. Bir sayı: yalnızca ilk o kadar fotoğraf (deneme için)
 BOX_THRESHOLD = 0.35    # Grounding DINO kutu eşiği
+MIN_BOX_FRAC = 0.005    # resmin %0,5'inden küçük kutular atılır (kırıntı). Daha çok maske için küçült
+MAX_BOX_FRAC = 0.90     # resmin %90'ından büyük kutular atılır
+MAX_PER_CLASS = 10      # bir sınıftan bir fotoğrafta en fazla bu kadar kutu (en yüksek skorlular). Daha çok maske için büyüt
 TEXT_THRESHOLD = 0.25
 NMS_IOU = 0.8           # aynı nesneye iki sınıf: kutular bu kadar örtüşürse yüksek skor kalır
 OBJECT_IOU = 0.7        # maskeleri bu kadar örtüşen iki nesne aynı nesnedir: yüksek skor kalır
+MAX_CANDIDATES = 40     # fotoğraf başına en fazla bu kadar aday (en büyükler önce)
+CAND_MIN_FRAC = 0.002   # resmin %0,2'sinden küçük adaylar atılır
+CAND_MAX_FRAC = 0.45    # resmin %45'inden büyük adaylar atılır (duvar, zemin)
+MULTIMASK = True        # True: SAM her kutu için 3 maske dener, en iyisini seçer. False: eski davranış
+POINTS_PER_SIDE = 32    # aday maskeler için SAM ızgarası. 48 ya da 64: daha ince adaylar, daha yavaş
+PRED_IOU_THRESH = 0.8   # adaylar için kalite eşikleri. 0,86 ve 0,95: daha temiz ama daha az aday
+STABILITY_THRESH = 0.92
 OUT_DIR = "/kaggle/working/bidvision_package"
 SAM2_CONFIG = "configs/sam2.1/sam2.1_hiera_l.yaml"
 SAM2_CHECKPOINT = "./checkpoints/sam2.1_hiera_large.pt"
@@ -94,8 +104,8 @@ except Exception as e:
 
 sam2_model = build_sam2(SAM2_CONFIG, SAM2_CHECKPOINT, device=DEVICE)
 predictor = SAM2ImagePredictor(sam2_model)
-generator = SAM2AutomaticMaskGenerator(sam2_model, points_per_side=32,
-                                       pred_iou_thresh=0.8, stability_score_thresh=0.92)
+generator = SAM2AutomaticMaskGenerator(sam2_model, points_per_side=POINTS_PER_SIDE,
+                                       pred_iou_thresh=PRED_IOU_THRESH, stability_score_thresh=STABILITY_THRESH)
 
 paths = mp.find_images(IMAGE_DIR)
 if MAX_IMAGES:
@@ -121,18 +131,26 @@ for n, path in enumerate(paths, 1):
             boxes += xyxy.tolist()
             scores += logits.tolist()
             names += [cls] * len(xyxy)
+        raw = len(boxes)
+        pre = mp.filter_boxes(boxes, scores, names, h * w, MIN_BOX_FRAC, MAX_BOX_FRAC, MAX_PER_CLASS)
+        boxes, scores, names = [boxes[i] for i in pre], [scores[i] for i in pre], [names[i] for i in pre]
         keep = mp.nms(boxes, scores, NMS_IOU)
+        print(f"  DINO ham kutu: {{raw}}, filtreden sonra: {{len(boxes)}}, NMS sonrası: {{len(keep)}}")
 
         object_masks, found = [], set()
         if keep:
             predictor.set_image(rgb)
-            masks, _, _ = predictor.predict(box=np.array([boxes[i] for i in keep]), multimask_output=False)
-            masks = np.asarray(masks)
-            if masks.ndim == 4:
-                masks = masks[:, 0]
-            elif masks.ndim == 2:
-                masks = masks[None]
-            masks = [m > 0.5 for m in masks]
+            masks, sam_scores, _ = predictor.predict(box=np.array([boxes[i] for i in keep]),
+                                                     multimask_output=MULTIMASK)
+            if MULTIMASK:  # SAM 3 maske tahmin eder, kendi puanı en yüksek olanı al
+                masks = mp.pick_best_masks(masks, sam_scores)
+            else:
+                masks = np.asarray(masks)
+                if masks.ndim == 4:
+                    masks = masks[:, 0]
+                elif masks.ndim == 2:
+                    masks = masks[None]
+                masks = [m > 0.5 for m in masks]
             # aynı nesne iki kez bulunduysa (maskeler neredeyse aynı) yüksek skorlu kalır
             for j in mp.dedupe_objects(masks, [scores[i] for i in keep], OBJECT_IOU):
                 i = keep[j]
@@ -142,7 +160,9 @@ for n, path in enumerate(paths, 1):
 
         auto = generator.generate(rgb)
     n_cand = 0
-    for m, area in mp.filter_candidates([a["segmentation"] for a in auto], object_masks, h * w):
+    for m, area in mp.filter_candidates([a["segmentation"] for a in auto], object_masks, h * w,
+                                        min_area_frac=CAND_MIN_FRAC, max_area_frac=CAND_MAX_FRAC,
+                                        max_count=MAX_CANDIDATES):
         n_cand += builder.add_candidate(image_id, mp.mask_to_polygons(m), area) is not None
 
     print(f"[{{n}}/{{len(paths)}}] {{path.name}}  {{w}}x{{h}}  nesne: {{len(object_masks)}}  aday: {{n_cand}}"
@@ -150,9 +170,12 @@ for n, path in enumerate(paths, 1):
 
 zip_path = builder.write(settings={{
     "box_threshold": BOX_THRESHOLD, "text_threshold": TEXT_THRESHOLD, "nms_iou": NMS_IOU,
-    "object_mask_iou": OBJECT_IOU, "candidates": "min 0.5 % / max 30 % of image, near copies dropped, max 20",
+    "box_area_frac": [MIN_BOX_FRAC, MAX_BOX_FRAC], "max_per_class": MAX_PER_CLASS,
+    "object_mask_iou": OBJECT_IOU,
+    "candidates": f"min {{CAND_MIN_FRAC:.1%}} / max {{CAND_MAX_FRAC:.0%}} of image, near copies dropped, max {{MAX_CANDIDATES}}",
     "sam2": SAM2_CHECKPOINT, "grounding_dino": GDINO_CHECKPOINT, "gdino_device": gdino_device,
-    "prompting": "one class per query",
+    "prompting": "one class per query", "sam_multimask": MULTIMASK,
+    "sam_auto": [POINTS_PER_SIDE, PRED_IOU_THRESH, STABILITY_THRESH],
 }})
 print(f"\\nPaket hazır: {{zip_path}}  ({{len(builder.images)}} resim, {{len(builder.annotations)}} nesne, "
       f"{{len(builder.candidates)}} aday)")

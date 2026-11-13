@@ -60,12 +60,52 @@ def test_polygons():
     check("values are plain floats (JSON safe)", all(type(v) is float for v in polys[0]))
 
 
+def test_fragments_and_best_mask():
+    pile = blank()
+    pile[50:250, 50:350] = 1                    # main body, 60000 px
+    for i in range(10):
+        pile[5:15, 5 + i * 30:25 + i * 30] = 1  # ten 200 px pieces, 0.3 % of the body
+    polys = mp.mask_to_polygons(pile)
+    check("scattered tiny pieces dropped, main body kept", len(polys) == 1)
+    two = blank()
+    two[10:60, 10:60] = 1
+    two[100:200, 200:350] = 1
+    check("a part 1/6 of the biggest stays", len(mp.mask_to_polygons(two)) == 2)
+    a, b = [10, 10, 100, 10, 100, 100, 10, 100], [200, 200, 204, 200, 204, 204, 200, 204]
+    check("drop_small_parts on stored polygons", mp.drop_small_parts([a, b]) == [a])
+    check("drop_small_parts keeps empty list", mp.drop_small_parts([]) == [])
+
+    h, w = 20, 30
+    m = np.zeros((4, 3, h, w), np.float32)
+    m[0, 1], m[1, 2], m[2, 0], m[3, 1] = 1, 1, 1, 1   # the right guess for each box
+    s = np.array([[.1, .9, .2], [.1, .2, .9], [.8, .1, .1], [.1, .7, .6]])
+    best = mp.pick_best_masks(m, s)
+    check("N boxes: best-scored guess each", len(best) == 4 and all(x.shape == (h, w) and x.all() for x in best))
+    best = mp.pick_best_masks(m[0], s[0])
+    check("single box (box axis dropped by SAM 2)", len(best) == 1 and best[0].all())
+
+
 def test_nms():
     boxes = [[10, 10, 110, 110], [12, 11, 111, 112], [120, 10, 220, 110]]
     keep = mp.nms(boxes, [0.4, 0.7, 0.5])
     check("same object asked as two classes -> higher score kept", keep == [1, 2])
     check("neighbouring objects both kept", mp.nms([[0, 0, 100, 100], [60, 0, 160, 100]], [0.9, 0.8]) == [0, 1])
     check("no boxes -> nothing", mp.nms([], []) == [])
+
+
+def test_filter_boxes():
+    area = 400 * 300
+    boxes = [[0, 0, 5, 5],            # speck
+             [0, 0, 400, 300],        # whole photo
+             [10, 10, 110, 110],      # fine
+             [20, 20, 120, 120],
+             [30, 30, 130, 130],
+             [200, 100, 300, 200]]
+    names = ["bag", "bag", "bag", "bag", "bag", "chair"]
+    scores = [0.9, 0.9, 0.5, 0.6, 0.7, 0.4]
+    keep = mp.filter_boxes(boxes, scores, names, area, max_per_class=2)
+    check("specks and photo-sized boxes dropped, best 2 per class kept", keep == [3, 4, 5])
+    check("no boxes -> nothing", mp.filter_boxes([], [], [], area) == [])
 
 
 def test_candidates():
@@ -228,6 +268,7 @@ def test_package_end_to_end(tmp):
     store.apply(1, pkg.annotations[1][0]["id"], "accept")
     store.apply(1, action="add", candidate_id=pkg.candidates[1][0]["id"],
                 category_id=next(c["id"] for c in pkg.categories if c["name"] == "misc_item"))
+    store.set_status(1, "reviewed")  # "Tamamla": only finished images are exported
     s = exporter.export(pkg, store, tmp / "export")
     other = [w for w in s["warnings"] if "ünite" not in w and "kümesi" not in w and "doğrulama" not in w]
     check(f"export: no size / polygon warnings ({other})", other == [])
@@ -242,7 +283,9 @@ def main():
     tmp = Path(tempfile.mkdtemp())
     try:
         test_polygons()
+        test_fragments_and_best_mask()
         test_nms()
+        test_filter_boxes()
         test_candidates()
         test_dedupe_objects()
         test_exif(tmp)
